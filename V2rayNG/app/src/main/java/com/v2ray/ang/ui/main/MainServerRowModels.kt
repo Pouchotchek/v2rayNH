@@ -21,6 +21,16 @@ internal data class ServerGroupUiState(
     val rows: List<ServerRowUiModel> = emptyList(),
 )
 
+internal fun splitServerFlag(title: String): Pair<String, String> {
+    val regionalIndicators = 0x1F1E6..0x1F1FF
+    if (title.length <= 4 || title.codePointAt(0) !in regionalIndicators ||
+        title.codePointAt(2) !in regionalIndicators
+    ) return "" to title
+
+    val name = title.substring(4).trimStart()
+    return if (name.isEmpty()) "" to title else title.substring(0, 4) to name
+}
+
 internal fun buildServerRowUiModel(
     server: ServersCache,
     subscriptionRemarks: String,

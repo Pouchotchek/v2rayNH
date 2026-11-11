@@ -16,7 +16,7 @@ object CertificateFingerprintManager {
 
     fun fetchForManualFill(profile: ProfileItem): String? {
         val request = buildRequest(profile) ?: return null
-        val result = if (profile.configType == EConfigType.HYSTERIA2) {
+        val result = if (isQuicBased(profile)) {
             fetch("quic", request) { Libv2ray.fetchQuicCertSha256(it) }
         } else {
             fetch("tls", request) { Libv2ray.fetchTlsCertSha256(it) }
@@ -42,8 +42,12 @@ object CertificateFingerprintManager {
         )
     }
 
+    private fun isQuicBased(profile: ProfileItem): Boolean {
+        return profile.configType == EConfigType.HYSTERIA2 || profile.configType == EConfigType.TUIC
+    }
+
     private fun isFetchable(profile: ProfileItem): Boolean {
-        return profile.configType == EConfigType.HYSTERIA2 || profile.security == AppConfig.TLS
+        return isQuicBased(profile) || profile.security == AppConfig.TLS
     }
 
     private fun fetch(

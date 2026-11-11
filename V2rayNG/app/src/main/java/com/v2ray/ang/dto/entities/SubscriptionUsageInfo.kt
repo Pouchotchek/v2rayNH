@@ -22,6 +22,8 @@ data class SubscriptionUsageInfo(
     val supportUrl: String? = null,
     /** Validated `Profile-Web-Page-Url` header. */
     val webPageUrl: String? = null,
+    val announcement: String? = null,
+    val hasTrafficInfo: Boolean = true,
 ) {
     /** Bytes consumed so far (upload + download). */
     val used: Long get() = upload + download

@@ -50,6 +50,7 @@ interface MainDataSource : Closeable {
     ): Pair<Int, Int>
 
     fun updateConfigViaSubAll(): SubscriptionUpdateResult
+    fun updateDueSubscriptions(): Boolean
     fun updateConfigViaSub(subscriptionCache: SubscriptionCache): SubscriptionUpdateResult
 
     fun shareNonCustomConfigsToClipboard(guids: List<String>): Int
@@ -61,6 +62,5 @@ interface MainDataSource : Closeable {
     fun cancelAllPing()
     fun testCurrentServerRealPing(requestId: String)
 
-    fun syncSubscriptions()
     fun initAssets()
 }

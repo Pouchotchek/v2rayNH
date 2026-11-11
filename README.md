@@ -1,90 +1,37 @@
-# v2rayNG
+# v2rayNH
 
-A V2Ray client for Android, support [Xray core](https://github.com/XTLS/Xray-core) and [v2fly core](https://github.com/v2fly/v2ray-core)
+An independent Android fork of [v2rayNG 2.3.14](https://github.com/2dust/v2rayNG/tree/2.3.14) with **TUIC v5** support and background subscription refresh.
 
-[![API](https://img.shields.io/badge/API-24%2B-yellow.svg?style=flat)](https://developer.android.com/about/versions/lollipop)
-[![Kotlin Version](https://img.shields.io/badge/Kotlin-2.4.0-blue.svg)](https://kotlinlang.org)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/2dust/v2rayNG)](https://github.com/2dust/v2rayNG/commits/master)
-[![CodeFactor](https://www.codefactor.io/repository/github/2dust/v2rayng/badge)](https://www.codefactor.io/repository/github/2dust/v2rayng)
-[![GitHub Releases](https://img.shields.io/github/downloads/2dust/v2rayNG/latest/total?logo=github)](https://github.com/2dust/v2rayNG/releases)
-[![Chat on Telegram](https://img.shields.io/badge/Chat%20on-Telegram-brightgreen.svg)](https://t.me/v2rayn)
+## What changed
 
----
+- **TUIC v5.** Import or export `tuic://` links and create profiles in the app. The APK includes an Xray-core build with the TUIC outbound.
+- **Subscription refresh.** New subscriptions refresh every two hours by default. Opening or returning to the app checks for due updates. The interval and enable switch are editable per subscription. Android may defer scheduled work while the device is idle or offline.
+- **Default routing.** A fresh configuration uses the built-in Russia whitelist preset. The routing screen still offers the other presets and custom rules.
+- **Subscription UI.** The tab uses the provider's title when available. The scrollable header shows traffic and a compact, centered announcement. Profile rows show the name, protocol and ping after a test.
 
-## Download / 下载
+## Download
 
-Download the latest release here:
+Get the APK from this repository's **Releases** page. Both the standard and F-Droid-style builds are available for `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64`. Use `universal` if you are unsure. The F-Droid-style build is a separate variant and can be downloaded here.
 
-在这里下载最新版本：
+The standard app ID is `com.v2raynh.android`. The F-Droid-style variant adds `.fdroid`. Each can be installed alongside upstream v2rayNG. App data is separate. Export a backup from the older app and import it in the fork if you want to migrate your settings.
 
-[https://github.com/2dust/v2rayNG/releases](https://github.com/2dust/v2rayNG/releases)
+## Build from source
 
-> [!TIP]
-> v2rayNG is the mobile version. For the desktop version, please visit the v2rayN \
-> v2rayNG 是手机版，电脑版请访问 v2rayN
->
-> https://github.com/2dust/v2rayN
+Use Linux with JDK 21, Go 1.27.3, Git, curl, jq, unzip and the Android SDK. Install platform `android-37.0`, Build Tools `37.0.0`, and NDKs `29.0.14206865` and `30.0.16248370`. Set `ANDROID_HOME` to the SDK directory.
 
----
-
-### Geoip and Geosite
-
-- geoip.dat and geosite.dat files are in `Android/data/com.v2ray.ang/files/assets` (path may differ on some Android device)
-- download feature will get enhanced version in this [repo](https://github.com/Loyalsoldier/v2ray-rules-dat) (note: it needs a working proxy)
-- latest official [domain list](https://github.com/Loyalsoldier/v2ray-rules-dat) and [ip list](https://github.com/Loyalsoldier/geoip) can be imported manually
-- possible to use a third-party dat file in the same folder, like [h2y](https://guide.v2fly.org/routing/sitedata.html#%E5%A4%96%E7%BD%AE%E7%9A%84%E5%9F%9F%E5%90%8D%E6%96%87%E4%BB%B6)
-
-More in our [wiki](https://github.com/2dust/v2rayNG/wiki)
-
-### Geoip 与 Geosite
-
-- geoip.dat 和 geosite.dat 文件位于 `Android/data/com.v2ray.ang/files/assets`（部分设备路径可能不同）
-- 下载功能将获取该 [仓库](https://github.com/Loyalsoldier/v2ray-rules-dat) 中的增强版本（注意：此功能需要一个可用的代理）
-- 最新官方 [域名列表](https://github.com/Loyalsoldier/v2ray-rules-dat) 和 [IP 列表](https://github.com/Loyalsoldier/geoip) 可手动导入
-- 也可在同一文件夹中使用第三方 dat 文件，例如 [h2y](https://guide.v2fly.org/routing/sitedata.html#%E5%A4%96%E7%BD%AE%E7%9A%84%E5%9F%9F%E5%90%8D%E6%96%87%E4%BB%B6)
-
-更多内容请见我们的 [wiki](https://github.com/2dust/v2rayNG/wiki)
-
----
-
-## Development guide / 开发指南
-
-### Note
-
-- Android project under the V2rayNG folder can be compiled directly in Android Studio, or using the Gradle wrapper. But the v2ray core inside the aar is (probably) outdated.
-- The aar can be compiled from the Golang project [AndroidLibV2rayLite](https://github.com/2dust/AndroidLibV2rayLite) or [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite). For a quick start, read the guides for [Go Mobile](https://github.com/golang/go/wiki/Mobile) and [Makefiles for Go Developers](https://tutorialedge.net/golang/makefiles-for-go-developers/).
-- v2rayNG can run on Android Emulators. For WSA, VPN permission needs to be granted via `appops set [package name] ACTIVATE_VPN allow`.
-
-### 提示
-
-- V2rayNG 文件夹下的 Android 项目可直接在 Android Studio 中编译，或使用 Gradle wrapper 编译。但 aar 内置的 v2ray core（可能）已过时。
-- aar 可由 Golang 项目 [AndroidLibV2rayLite](https://github.com/2dust/AndroidLibV2rayLite) 或 [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite) 编译而成。快速入门可参考 [Go Mobile](https://github.com/golang/go/wiki/Mobile) 指南和 [Makefiles for Go Developers](https://tutorialedge.net/golang/makefiles-for-go-developers/)。
-- v2rayNG 可在 Android 模拟器上运行。对于 WSA，需要通过 `appops set [package name] ACTIVATE_VPN allow` 授予 VPN 权限。
-
----
-
-
-## GPG Verification / GPG 签名校验
-
-Release files are signed with GPG to verify authenticity and integrity, helping prevent mirror, ISP, or CDN hijacking.
-
-发布文件已使用 GPG 签名，可用于校验文件真实性与完整性，预防镜像站、运营商或 CDN 劫持。
-
-### Fingerprint / 公钥指纹
-
-```text
-7694 5E9F 3E9A 168F 8070 F195 805D 661C
-134D FAF6 8903 C199 463C 31E5 AE90 3AE0
+```sh
+bash scripts/build-native.sh
+cd V2rayNG
+./gradlew :app:testPlaystoreDebugUnitTest :app:testFdroidDebugUnitTest
+./gradlew :app:assemblePlaystoreDebug :app:assembleFdroidDebug
 ```
 
----
+The native build checks out the pinned Xray-core revision and applies [the TUIC patch](patches/xray-tuic.patch). It builds the four ABIs from that source and the pinned AndroidLibXrayLite and HEV submodules.
 
-## Community / 社区
+For signed releases, set `FORK_KEYSTORE`, `FORK_KEYSTORE_PASSWORD`, `FORK_KEY_ALIAS`, and `FORK_KEY_PASSWORD` in the build environment. Set the repository explicitly with `-PFORK_GITHUB_REPOSITORY=OWNER/REPO` when running `:app:assembleRelease`. That repository is the only source for in-app APK updates. Local builds without the property skip the update check.
 
-Telegram Group / Telegram 群组：
+Use the same signing key and increment `versionCode` for each release. Tag releases `vMAJOR.MINOR.PATCH` to match `versionName`. The GitHub Actions build can package and verify signed APKs with the corresponding repository secrets.
 
-[https://t.me/v2rayN](https://t.me/v2rayN)
+## Source and licensing
 
-Telegram Channel / Telegram 频道：
-
-[https://t.me/github_2dust](https://t.me/github_2dust)
+The Android application is based on [2dust/v2rayNG](https://github.com/2dust/v2rayNG) and retains its [GPL-3.0 license](LICENSE). The native build uses [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite), [Xray-core](https://github.com/XTLS/Xray-core), and [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) under their respective licenses. The TUIC changes to Xray-core are supplied as source in the patch above.

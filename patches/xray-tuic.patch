@@ -1,0 +1,2054 @@
+diff --git a/infra/conf/transport_internet.go b/infra/conf/transport_internet.go
+index efee036..bf56d2c 100644
+--- a/infra/conf/transport_internet.go
++++ b/infra/conf/transport_internet.go
+@@ -38,6 +38,8 @@ func (p TransportProtocol) Build() (string, error) {
+ 		return "", errors.PrintRemovedFeatureError("QUIC transport (without web service, etc.)", "XHTTP stream-one H3")
+ 	case "hysteria":
+ 		return "hysteria", nil
++	case "tuic":
++		return "tuic", nil
+ 	case "masque":
+ 		return "masque", nil
+ 	case "xdrive":
+@@ -65,6 +67,7 @@ type StreamConfig struct {
+ 	WSSettings          *WebSocketConfig   `json:"wsSettings"`
+ 	HTTPUPGRADESettings *HttpUpgradeConfig `json:"httpupgradeSettings"`
+ 	HysteriaSettings    *HysteriaConfig    `json:"hysteriaSettings"`
++	TUICSettings        *TuicConfig        `json:"tuicSettings"`
+ 	MASQUESettings      *MasqueConfig      `json:"masqueSettings"`
+ 	XDRIVESettings      *XDriveConfig      `json:"xdriveSettings"`
+ 	SocketSettings      *SocketConfig      `json:"sockopt"`
+@@ -210,6 +213,16 @@ func (c *StreamConfig) Build() (*internet.StreamConfig, error) {
+ 			Settings:     serial.ToTypedMessage(hs),
+ 		})
+ 	}
++	if c.TUICSettings != nil {
++		ts, err := c.TUICSettings.Build()
++		if err != nil {
++			return nil, errors.New("Failed to build TUIC config.").Base(err)
++		}
++		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
++			ProtocolName: "tuic",
++			Settings:     serial.ToTypedMessage(ts),
++		})
++	}
+ 	if c.MASQUESettings != nil {
+ 		ms, err := c.MASQUESettings.Build()
+ 		if err != nil {
+diff --git a/infra/conf/tuic.go b/infra/conf/tuic.go
+new file mode 100644
+index 0000000..4326b35
+--- /dev/null
++++ b/infra/conf/tuic.go
+@@ -0,0 +1,76 @@
++package conf
++
++import (
++	"strings"
++
++	"github.com/google/uuid"
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/common/protocol"
++	"github.com/xtls/xray-core/proxy/tuic"
++	transport "github.com/xtls/xray-core/transport/internet/tuic"
++	"google.golang.org/protobuf/proto"
++)
++
++// TuicClientConfig is the "tuic" outbound; credentials live in streamSettings.tuicSettings.
++type TuicClientConfig struct {
++	Version int32    `json:"version"`
++	Address *Address `json:"address"`
++	Port    uint16   `json:"port"`
++}
++
++func (c *TuicClientConfig) Build() (proto.Message, error) {
++	if c.Version != 0 && c.Version != 5 {
++		return nil, errors.New("tuic: only version 5 is supported")
++	}
++	if c.Address == nil {
++		return nil, errors.New("tuic: server address is not set")
++	}
++
++	config := &tuic.ClientConfig{}
++	config.Server = &protocol.ServerEndpoint{
++		Address: c.Address.Build(),
++		Port:    uint32(c.Port),
++	}
++
++	return config, nil
++}
++
++// TuicConfig is streamSettings.tuicSettings.
++type TuicConfig struct {
++	UUID              string `json:"uuid"`
++	Password          string `json:"password"`
++	CongestionControl string `json:"congestionControl"`
++	UdpRelayMode      string `json:"udpRelayMode"`
++	ZeroRtt           bool   `json:"zeroRtt"`
++}
++
++func (c *TuicConfig) Build() (proto.Message, error) {
++	id, err := uuid.Parse(strings.TrimSpace(c.UUID))
++	if err != nil {
++		return nil, errors.New("tuic: invalid uuid").Base(err)
++	}
++
++	congestion := strings.ToLower(c.CongestionControl)
++	switch congestion {
++	case "", transport.CongestionCubic, transport.CongestionNewReno, transport.CongestionBBR:
++	case "reno":
++		congestion = transport.CongestionNewReno
++	default:
++		return nil, errors.New(`tuic: congestionControl must be "cubic", "new_reno" or "bbr", not "`, c.CongestionControl, `"`)
++	}
++
++	relay := strings.ToLower(c.UdpRelayMode)
++	switch relay {
++	case "", transport.UDPRelayNative, transport.UDPRelayQUIC:
++	default:
++		return nil, errors.New(`tuic: udpRelayMode must be "native" or "quic", not "`, c.UdpRelayMode, `"`)
++	}
++
++	return &transport.Config{
++		Uuid:              id.String(),
++		Password:          c.Password,
++		CongestionControl: congestion,
++		UdpRelayMode:      relay,
++		ZeroRtt:           c.ZeroRtt,
++	}, nil
++}
+diff --git a/infra/conf/tuic_test.go b/infra/conf/tuic_test.go
+new file mode 100644
+index 0000000..a00c83b
+--- /dev/null
++++ b/infra/conf/tuic_test.go
+@@ -0,0 +1,107 @@
++package conf_test
++
++import (
++	"encoding/json"
++	"strings"
++	"testing"
++
++	"github.com/xtls/xray-core/app/proxyman"
++	. "github.com/xtls/xray-core/infra/conf"
++	"github.com/xtls/xray-core/transport/internet/tuic"
++)
++
++// Same shape that the v2rayNG app generates for a TUIC profile.
++const tuicOutbound = `{
++	"tag": "proxy",
++	"protocol": "tuic",
++	"settings": {"address": "example.com", "port": 443, "version": 5},
++	"streamSettings": {
++		"network": "tuic",
++		"security": "tls",
++		"tlsSettings": {"serverName": "example.com", "alpn": ["h3"]},
++		"tuicSettings": {
++			"uuid": "b3a1c2d4-1111-2222-3333-444455556666",
++			"password": "secret",
++			"congestionControl": "bbr",
++			"udpRelayMode": "quic",
++			"zeroRtt": true
++		}
++	}
++}`
++
++func TestTuicOutbound(t *testing.T) {
++	c := new(OutboundDetourConfig)
++	if err := json.Unmarshal([]byte(tuicOutbound), c); err != nil {
++		t.Fatal(err)
++	}
++	built, err := c.Build()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if built.ProxySettings == nil {
++		t.Fatal("no proxy settings")
++	}
++
++	senderMsg, err := built.SenderSettings.GetInstance()
++	if err != nil {
++		t.Fatal(err)
++	}
++	ss := senderMsg.(*proxyman.SenderConfig).StreamSettings
++	if ss.ProtocolName != "tuic" {
++		t.Fatalf("transport is %q", ss.ProtocolName)
++	}
++
++	var cfg *tuic.Config
++	for _, ts := range ss.TransportSettings {
++		if ts.ProtocolName != "tuic" {
++			continue
++		}
++		inst, err := ts.Settings.GetInstance()
++		if err != nil {
++			t.Fatal(err)
++		}
++		cfg = inst.(*tuic.Config)
++	}
++	if cfg == nil {
++		t.Fatal("no tuic transport settings")
++	}
++	if cfg.Uuid != "b3a1c2d4-1111-2222-3333-444455556666" || cfg.Password != "secret" ||
++		cfg.CongestionControl != "bbr" || cfg.UdpRelayMode != "quic" || !cfg.ZeroRtt {
++		t.Errorf("unexpected config %+v", cfg)
++	}
++}
++
++func TestTuicConfigValidation(t *testing.T) {
++	cases := map[string]string{
++		"bad uuid":       `"uuid": "not-a-uuid"`,
++		"bad congestion": `"uuid": "b3a1c2d4-1111-2222-3333-444455556666", "congestionControl": "vegas"`,
++		"bad relay mode": `"uuid": "b3a1c2d4-1111-2222-3333-444455556666", "udpRelayMode": "tcp"`,
++	}
++	for name, fields := range cases {
++		var c TuicConfig
++		if err := json.Unmarshal([]byte("{"+fields+"}"), &c); err != nil {
++			t.Fatal(err)
++		}
++		if _, err := c.Build(); err == nil {
++			t.Errorf("%s: expected an error", name)
++		}
++	}
++
++	// Defaults are accepted and the old "reno" spelling maps to new_reno.
++	for _, in := range []string{`{"uuid":"b3a1c2d4-1111-2222-3333-444455556666"}`, `{"uuid":"b3a1c2d4-1111-2222-3333-444455556666","congestionControl":"reno"}`} {
++		var c TuicConfig
++		if err := json.Unmarshal([]byte(in), &c); err != nil {
++			t.Fatal(err)
++		}
++		if _, err := c.Build(); err != nil {
++			t.Errorf("%s: %v", in, err)
++		}
++	}
++}
++
++func TestTuicClientVersion(t *testing.T) {
++	c := &TuicClientConfig{Version: 4}
++	if _, err := c.Build(); err == nil || !strings.Contains(err.Error(), "version 5") {
++		t.Errorf("expected a version error, got %v", err)
++	}
++}
+diff --git a/infra/conf/xray.go b/infra/conf/xray.go
+index 6bf6ba4..c39bffe 100644
+--- a/infra/conf/xray.go
++++ b/infra/conf/xray.go
+@@ -54,6 +54,7 @@ var (
+ 		"vmess":       func() interface{} { return new(VMessOutboundConfig) },
+ 		"trojan":      func() interface{} { return new(TrojanClientConfig) },
+ 		"hysteria":    func() interface{} { return new(HysteriaClientConfig) },
++		"tuic":        func() interface{} { return new(TuicClientConfig) },
+ 		"masque":      func() interface{} { return new(MasqueClientConfig) },
+ 		"dns":         func() interface{} { return new(DNSOutboundConfig) },
+ 		"wireguard":   func() interface{} { return &WireGuardConfig{IsClient: true} },
+diff --git a/main/distro/all/all.go b/main/distro/all/all.go
+index 840d0e1..c508386 100644
+--- a/main/distro/all/all.go
++++ b/main/distro/all/all.go
+@@ -45,6 +45,7 @@ import (
+ 	_ "github.com/xtls/xray-core/proxy/shadowsocks"
+ 	_ "github.com/xtls/xray-core/proxy/socks"
+ 	_ "github.com/xtls/xray-core/proxy/trojan"
++	_ "github.com/xtls/xray-core/proxy/tuic"
+ 	_ "github.com/xtls/xray-core/proxy/vless/inbound"
+ 	_ "github.com/xtls/xray-core/proxy/vless/outbound"
+ 	_ "github.com/xtls/xray-core/proxy/vmess/inbound"
+@@ -60,6 +61,7 @@ import (
+ 	_ "github.com/xtls/xray-core/transport/internet/splithttp"
+ 	_ "github.com/xtls/xray-core/transport/internet/tcp"
+ 	_ "github.com/xtls/xray-core/transport/internet/tls"
++	_ "github.com/xtls/xray-core/transport/internet/tuic"
+ 	_ "github.com/xtls/xray-core/transport/internet/udp"
+ 	_ "github.com/xtls/xray-core/transport/internet/websocket"
+ 	_ "github.com/xtls/xray-core/transport/internet/xdrive"
+diff --git a/proxy/tuic/client.go b/proxy/tuic/client.go
+new file mode 100644
+index 0000000..590ec1a
+--- /dev/null
++++ b/proxy/tuic/client.go
+@@ -0,0 +1,207 @@
++package tuic
++
++import (
++	"context"
++
++	"github.com/xtls/xray-core/common"
++	"github.com/xtls/xray-core/common/buf"
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/common/protocol"
++	"github.com/xtls/xray-core/common/session"
++	"github.com/xtls/xray-core/common/signal"
++	"github.com/xtls/xray-core/common/task"
++	"github.com/xtls/xray-core/core"
++	"github.com/xtls/xray-core/features/policy"
++	"github.com/xtls/xray-core/transport"
++	"github.com/xtls/xray-core/transport/internet"
++	"github.com/xtls/xray-core/transport/internet/stat"
++	"github.com/xtls/xray-core/transport/internet/tuic"
++)
++
++type Client struct {
++	server        *protocol.ServerSpec
++	policyManager policy.Manager
++}
++
++func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
++	v := core.MustFromContext(ctx)
++	p := v.GetFeature(policy.ManagerType()).(policy.Manager)
++
++	streamSettings := session.StreamSettingsFromContext(ctx).(*internet.MemoryStreamConfig)
++	if _, ok := streamSettings.ProtocolSettings.(*tuic.Config); !ok {
++		return nil, errors.New("not tuic transport")
++	}
++	if config.Server == nil {
++		return nil, errors.New(`no target server found`)
++	}
++	server, err := protocol.NewServerSpecFromPB(config.Server)
++	if err != nil {
++		return nil, errors.New("failed to get server spec").Base(err)
++	}
++
++	return &Client{
++		server:        server,
++		policyManager: p,
++	}, nil
++}
++
++func (c *Client) Process(ctx context.Context, link *transport.Link, dialer internet.Dialer) error {
++	outbounds := session.OutboundsFromContext(ctx)
++	ob := outbounds[len(outbounds)-1]
++	if !ob.Target.IsValid() {
++		return errors.New("target not specified")
++	}
++	ob.Name = "tuic"
++	ob.CanSpliceCopy = 3
++	target := ob.Target
++
++	conn, err := dialer.Dial(tuic.ContextWithDatagram(ctx, target.Network == net.Network_UDP), c.server.Destination)
++	if err != nil {
++		return errors.New("failed to find an available destination").Base(err)
++	}
++	defer conn.Close()
++	errors.LogInfo(ctx, "tunneling request to ", target, " via ", target.Network, ":", c.server.Destination.NetAddr())
++
++	var newCtx context.Context
++	var newCancel context.CancelFunc
++	if session.TimeoutOnlyFromContext(ctx) {
++		newCtx, newCancel = context.WithCancel(context.Background())
++	}
++
++	sessionPolicy := c.policyManager.ForLevel(0)
++	ctx, cancel := context.WithCancel(ctx)
++	timer := signal.CancelAfterInactivity(ctx, func() {
++		cancel()
++		if newCancel != nil {
++			newCancel()
++		}
++	}, sessionPolicy.Timeouts.ConnectionIdle)
++
++	if newCtx != nil {
++		ctx = newCtx
++	}
++
++	if target.Network == net.Network_TCP {
++		requestDone := func() error {
++			defer timer.SetTimeout(sessionPolicy.Timeouts.DownlinkOnly)
++
++			header, err := tuic.AppendConnectHeader(nil, target)
++			if err != nil {
++				return errors.New("failed to build connect request").Base(err)
++			}
++			bufferedWriter := buf.NewBufferedWriter(buf.NewWriter(conn))
++			if _, err := bufferedWriter.Write(header); err != nil {
++				return errors.New("failed to write request").Base(err)
++			}
++			// Flush the header together with the first payload, if any is already waiting.
++			if err := bufferedWriter.SetBuffered(false); err != nil {
++				return err
++			}
++			return buf.Copy(link.Reader, bufferedWriter, buf.UpdateActivity(timer))
++		}
++
++		// TUIC has no response header: the server simply relays data back on the same stream.
++		responseDone := func() error {
++			defer timer.SetTimeout(sessionPolicy.Timeouts.UplinkOnly)
++			return buf.Copy(buf.NewReader(conn), link.Writer, buf.UpdateActivity(timer))
++		}
++
++		responseDoneAndCloseWriter := task.OnSuccess(responseDone, task.Close(link.Writer))
++		if err := task.Run(ctx, requestDone, responseDoneAndCloseWriter); err != nil {
++			return errors.New("connection ends").Base(err)
++		}
++
++		return nil
++	}
++
++	if target.Network == net.Network_UDP {
++		udpConn, ok := stat.TryUnwrapStatsConn(conn).(*tuic.UDPConn)
++		if !ok {
++			return errors.New("udp requires tuic udp association")
++		}
++
++		requestDone := func() error {
++			defer timer.SetTimeout(sessionPolicy.Timeouts.DownlinkOnly)
++
++			writer := &UDPWriter{conn: udpConn, target: target}
++			if err := buf.Copy(link.Reader, writer, buf.UpdateActivity(timer)); err != nil {
++				return errors.New("failed to transport all UDP request").Base(err)
++			}
++			return nil
++		}
++
++		responseDone := func() error {
++			defer timer.SetTimeout(sessionPolicy.Timeouts.UplinkOnly)
++
++			reader := &UDPReader{conn: udpConn}
++			if err := buf.Copy(reader, link.Writer, buf.UpdateActivity(timer)); err != nil {
++				return errors.New("failed to transport all UDP response").Base(err)
++			}
++			return nil
++		}
++
++		responseDoneAndCloseWriter := task.OnSuccess(responseDone, task.Close(link.Writer))
++		if err := task.Run(ctx, requestDone, responseDoneAndCloseWriter); err != nil {
++			return errors.New("connection ends").Base(err)
++		}
++
++		return nil
++	}
++
++	return nil
++}
++
++func init() {
++	common.Must(common.RegisterConfig((*ClientConfig)(nil), func(ctx context.Context, config interface{}) (interface{}, error) {
++		return NewClient(ctx, config.(*ClientConfig))
++	}))
++}
++
++// UDPWriter sends every buffer as one TUIC Packet to its own destination, or to the session target.
++type UDPWriter struct {
++	conn   *tuic.UDPConn
++	target net.Destination
++}
++
++func (w *UDPWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
++	for i, b := range mb {
++		dest := w.target
++		if b.UDP != nil {
++			dest = *b.UDP
++		}
++		if err := w.conn.WritePacket(dest, b.Bytes()); err != nil {
++			buf.ReleaseMulti(mb[i:])
++			return err
++		}
++		b.Release()
++	}
++	return nil
++}
++
++// UDPReader turns received TUIC Packets into buffers carrying the packet's source address.
++type UDPReader struct {
++	conn *tuic.UDPConn
++}
++
++func (r *UDPReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
++	for {
++		addr, data, err := r.conn.ReadPacket()
++		if err != nil {
++			return nil, err
++		}
++		if len(data) > buf.Size {
++			// Larger than one buffer: drop, like an oversized datagram on a real socket.
++			continue
++		}
++		b := buf.New()
++		if _, err := b.Write(data); err != nil {
++			b.Release()
++			return nil, err
++		}
++		dest := addr
++		dest.Network = net.Network_UDP
++		b.UDP = &dest
++		return buf.MultiBuffer{b}, nil
++	}
++}
+diff --git a/proxy/tuic/config.pb.go b/proxy/tuic/config.pb.go
+new file mode 100644
+index 0000000..4893641
+--- /dev/null
++++ b/proxy/tuic/config.pb.go
+@@ -0,0 +1,126 @@
++// Code generated by protoc-gen-go. DO NOT EDIT.
++// versions:
++// 	protoc-gen-go v1.36.12
++// 	protoc        (unknown)
++// source: proxy/tuic/config.proto
++
++package tuic
++
++import (
++	protocol "github.com/xtls/xray-core/common/protocol"
++	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
++	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
++	reflect "reflect"
++	sync "sync"
++	unsafe "unsafe"
++)
++
++const (
++	// Verify that this generated code is sufficiently up-to-date.
++	_ = protoimpl.EnforceVersion(20 - protoimpl.MinVersion)
++	// Verify that runtime/protoimpl is sufficiently up-to-date.
++	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
++)
++
++type ClientConfig struct {
++	state         protoimpl.MessageState   `protogen:"open.v1"`
++	Server        *protocol.ServerEndpoint `protobuf:"bytes,1,opt,name=server,proto3" json:"server,omitempty"`
++	unknownFields protoimpl.UnknownFields
++	sizeCache     protoimpl.SizeCache
++}
++
++func (x *ClientConfig) Reset() {
++	*x = ClientConfig{}
++	mi := &file_proxy_tuic_config_proto_msgTypes[0]
++	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
++	ms.StoreMessageInfo(mi)
++}
++
++func (x *ClientConfig) String() string {
++	return protoimpl.X.MessageStringOf(x)
++}
++
++func (*ClientConfig) ProtoMessage() {}
++
++func (x *ClientConfig) ProtoReflect() protoreflect.Message {
++	mi := &file_proxy_tuic_config_proto_msgTypes[0]
++	if x != nil {
++		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
++		if ms.LoadMessageInfo() == nil {
++			ms.StoreMessageInfo(mi)
++		}
++		return ms
++	}
++	return mi.MessageOf(x)
++}
++
++// Deprecated: Use ClientConfig.ProtoReflect.Descriptor instead.
++func (*ClientConfig) Descriptor() ([]byte, []int) {
++	return file_proxy_tuic_config_proto_rawDescGZIP(), []int{0}
++}
++
++func (x *ClientConfig) GetServer() *protocol.ServerEndpoint {
++	if x != nil {
++		return x.Server
++	}
++	return nil
++}
++
++var File_proxy_tuic_config_proto protoreflect.FileDescriptor
++
++const file_proxy_tuic_config_proto_rawDesc = "" +
++	"\n" +
++	"\x17proxy/tuic/config.proto\x12\x0fxray.proxy.tuic\x1a!common/protocol/server_spec.proto\"L\n" +
++	"\fClientConfig\x12<\n" +
++	"\x06server\x18\x01 \x01(\v2$.xray.common.protocol.ServerEndpointR\x06serverBO\n" +
++	"\x13com.xray.proxy.tuicP\x01Z$github.com/xtls/xray-core/proxy/tuic\xaa\x02\x0fXray.Proxy.Tuicb\x06proto3"
++
++var (
++	file_proxy_tuic_config_proto_rawDescOnce sync.Once
++	file_proxy_tuic_config_proto_rawDescData []byte
++)
++
++func file_proxy_tuic_config_proto_rawDescGZIP() []byte {
++	file_proxy_tuic_config_proto_rawDescOnce.Do(func() {
++		file_proxy_tuic_config_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proxy_tuic_config_proto_rawDesc), len(file_proxy_tuic_config_proto_rawDesc)))
++	})
++	return file_proxy_tuic_config_proto_rawDescData
++}
++
++var file_proxy_tuic_config_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
++var file_proxy_tuic_config_proto_goTypes = []any{
++	(*ClientConfig)(nil),            // 0: xray.proxy.tuic.ClientConfig
++	(*protocol.ServerEndpoint)(nil), // 1: xray.common.protocol.ServerEndpoint
++}
++var file_proxy_tuic_config_proto_depIdxs = []int32{
++	1, // 0: xray.proxy.tuic.ClientConfig.server:type_name -> xray.common.protocol.ServerEndpoint
++	1, // [1:1] is the sub-list for method output_type
++	1, // [1:1] is the sub-list for method input_type
++	1, // [1:1] is the sub-list for extension type_name
++	1, // [1:1] is the sub-list for extension extendee
++	0, // [0:1] is the sub-list for field type_name
++}
++
++func init() { file_proxy_tuic_config_proto_init() }
++func file_proxy_tuic_config_proto_init() {
++	if File_proxy_tuic_config_proto != nil {
++		return
++	}
++	type x struct{}
++	out := protoimpl.TypeBuilder{
++		File: protoimpl.DescBuilder{
++			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
++			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proxy_tuic_config_proto_rawDesc), len(file_proxy_tuic_config_proto_rawDesc)),
++			NumEnums:      0,
++			NumMessages:   1,
++			NumExtensions: 0,
++			NumServices:   0,
++		},
++		GoTypes:           file_proxy_tuic_config_proto_goTypes,
++		DependencyIndexes: file_proxy_tuic_config_proto_depIdxs,
++		MessageInfos:      file_proxy_tuic_config_proto_msgTypes,
++	}.Build()
++	File_proxy_tuic_config_proto = out.File
++	file_proxy_tuic_config_proto_goTypes = nil
++	file_proxy_tuic_config_proto_depIdxs = nil
++}
+diff --git a/proxy/tuic/config.proto b/proxy/tuic/config.proto
+new file mode 100644
+index 0000000..68d1ba3
+--- /dev/null
++++ b/proxy/tuic/config.proto
+@@ -0,0 +1,13 @@
++syntax = "proto3";
++
++package xray.proxy.tuic;
++option csharp_namespace = "Xray.Proxy.Tuic";
++option go_package = "github.com/xtls/xray-core/proxy/tuic";
++option java_package = "com.xray.proxy.tuic";
++option java_multiple_files = true;
++
++import "common/protocol/server_spec.proto";
++
++message ClientConfig {
++  xray.common.protocol.ServerEndpoint server = 1;
++}
+diff --git a/transport/internet/tuic/config.go b/transport/internet/tuic/config.go
+new file mode 100644
+index 0000000..8a629d4
+--- /dev/null
++++ b/transport/internet/tuic/config.go
+@@ -0,0 +1,81 @@
++package tuic
++
++import (
++	"context"
++	"time"
++
++	"github.com/xtls/xray-core/common"
++	"github.com/xtls/xray-core/transport/internet"
++)
++
++const protocolName = "tuic"
++
++// TUIC protocol version 0x05, see https://github.com/tuic-protocol/tuic/blob/master/SPEC.md
++const (
++	Version byte = 0x05
++
++	CmdAuthenticate byte = 0x00
++	CmdConnect      byte = 0x01
++	CmdPacket       byte = 0x02
++	CmdDissociate   byte = 0x03
++	CmdHeartbeat    byte = 0x04
++)
++
++const (
++	AddrTypeDomain byte = 0x00
++	AddrTypeIPv4   byte = 0x01
++	AddrTypeIPv6   byte = 0x02
++	AddrTypeNone   byte = 0xff
++)
++
++const (
++	closeErrCodeOK = 0x0
++
++	// tokenLength is the size of the TOKEN field of the Authenticate command.
++	tokenLength = 32
++
++	// packetHeaderLength is the fixed part of a Packet command:
++	// VER, TYPE, ASSOC_ID(2), PKT_ID(2), FRAG_TOTAL, FRAG_ID, SIZE(2).
++	packetHeaderLength = 10
++
++	udpMessageChanSize  = 1024
++	idleCleanupInterval = 1 * time.Second
++	keepAlivePeriod     = 10 * time.Second
++	maxIdleTimeout      = 30 * time.Second
++	openStreamTimeout   = 10 * time.Second
++)
++
++const (
++	CongestionCubic   = "cubic"
++	CongestionNewReno = "new_reno"
++	CongestionBBR     = "bbr"
++
++	UDPRelayNative = "native"
++	UDPRelayQUIC   = "quic"
++)
++
++type datagramKey struct{}
++
++// ContextWithDatagram marks the dial as a UDP association (true) or a TCP connect (false).
++func ContextWithDatagram(ctx context.Context, v bool) context.Context {
++	return context.WithValue(ctx, datagramKey{}, v)
++}
++
++func DatagramFromContext(ctx context.Context) bool {
++	v, _ := ctx.Value(datagramKey{}).(bool)
++	return v
++}
++
++type status int
++
++const (
++	StatusNull status = iota
++	StatusActive
++	StatusInactive
++)
++
++func init() {
++	common.Must(internet.RegisterProtocolConfigCreator(protocolName, func() interface{} {
++		return &Config{}
++	}))
++}
+diff --git a/transport/internet/tuic/config.pb.go b/transport/internet/tuic/config.pb.go
+new file mode 100644
+index 0000000..1308882
+--- /dev/null
++++ b/transport/internet/tuic/config.pb.go
+@@ -0,0 +1,162 @@
++// Code generated by protoc-gen-go. DO NOT EDIT.
++// versions:
++// 	protoc-gen-go v1.36.12
++// 	protoc        (unknown)
++// source: transport/internet/tuic/config.proto
++
++package tuic
++
++import (
++	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
++	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
++	reflect "reflect"
++	sync "sync"
++	unsafe "unsafe"
++)
++
++const (
++	// Verify that this generated code is sufficiently up-to-date.
++	_ = protoimpl.EnforceVersion(20 - protoimpl.MinVersion)
++	// Verify that runtime/protoimpl is sufficiently up-to-date.
++	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
++)
++
++type Config struct {
++	state protoimpl.MessageState `protogen:"open.v1"`
++	// User UUID, canonical text form.
++	Uuid     string `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
++	Password string `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
++	// "", "cubic", "new_reno" or "bbr".
++	CongestionControl string `protobuf:"bytes,3,opt,name=congestion_control,json=congestionControl,proto3" json:"congestion_control,omitempty"`
++	// "", "native" or "quic".
++	UdpRelayMode  string `protobuf:"bytes,4,opt,name=udp_relay_mode,json=udpRelayMode,proto3" json:"udp_relay_mode,omitempty"`
++	ZeroRtt       bool   `protobuf:"varint,5,opt,name=zero_rtt,json=zeroRtt,proto3" json:"zero_rtt,omitempty"`
++	unknownFields protoimpl.UnknownFields
++	sizeCache     protoimpl.SizeCache
++}
++
++func (x *Config) Reset() {
++	*x = Config{}
++	mi := &file_transport_internet_tuic_config_proto_msgTypes[0]
++	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
++	ms.StoreMessageInfo(mi)
++}
++
++func (x *Config) String() string {
++	return protoimpl.X.MessageStringOf(x)
++}
++
++func (*Config) ProtoMessage() {}
++
++func (x *Config) ProtoReflect() protoreflect.Message {
++	mi := &file_transport_internet_tuic_config_proto_msgTypes[0]
++	if x != nil {
++		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
++		if ms.LoadMessageInfo() == nil {
++			ms.StoreMessageInfo(mi)
++		}
++		return ms
++	}
++	return mi.MessageOf(x)
++}
++
++// Deprecated: Use Config.ProtoReflect.Descriptor instead.
++func (*Config) Descriptor() ([]byte, []int) {
++	return file_transport_internet_tuic_config_proto_rawDescGZIP(), []int{0}
++}
++
++func (x *Config) GetUuid() string {
++	if x != nil {
++		return x.Uuid
++	}
++	return ""
++}
++
++func (x *Config) GetPassword() string {
++	if x != nil {
++		return x.Password
++	}
++	return ""
++}
++
++func (x *Config) GetCongestionControl() string {
++	if x != nil {
++		return x.CongestionControl
++	}
++	return ""
++}
++
++func (x *Config) GetUdpRelayMode() string {
++	if x != nil {
++		return x.UdpRelayMode
++	}
++	return ""
++}
++
++func (x *Config) GetZeroRtt() bool {
++	if x != nil {
++		return x.ZeroRtt
++	}
++	return false
++}
++
++var File_transport_internet_tuic_config_proto protoreflect.FileDescriptor
++
++const file_transport_internet_tuic_config_proto_rawDesc = "" +
++	"\n" +
++	"$transport/internet/tuic/config.proto\x12\x1cxray.transport.internet.tuic\"\xa8\x01\n" +
++	"\x06Config\x12\x12\n" +
++	"\x04uuid\x18\x01 \x01(\tR\x04uuid\x12\x1a\n" +
++	"\bpassword\x18\x02 \x01(\tR\bpassword\x12-\n" +
++	"\x12congestion_control\x18\x03 \x01(\tR\x11congestionControl\x12$\n" +
++	"\x0eudp_relay_mode\x18\x04 \x01(\tR\fudpRelayMode\x12\x19\n" +
++	"\bzero_rtt\x18\x05 \x01(\bR\azeroRttBv\n" +
++	" com.xray.transport.internet.tuicP\x01Z1github.com/xtls/xray-core/transport/internet/tuic\xaa\x02\x1cXray.Transport.Internet.Tuicb\x06proto3"
++
++var (
++	file_transport_internet_tuic_config_proto_rawDescOnce sync.Once
++	file_transport_internet_tuic_config_proto_rawDescData []byte
++)
++
++func file_transport_internet_tuic_config_proto_rawDescGZIP() []byte {
++	file_transport_internet_tuic_config_proto_rawDescOnce.Do(func() {
++		file_transport_internet_tuic_config_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_transport_internet_tuic_config_proto_rawDesc), len(file_transport_internet_tuic_config_proto_rawDesc)))
++	})
++	return file_transport_internet_tuic_config_proto_rawDescData
++}
++
++var file_transport_internet_tuic_config_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
++var file_transport_internet_tuic_config_proto_goTypes = []any{
++	(*Config)(nil), // 0: xray.transport.internet.tuic.Config
++}
++var file_transport_internet_tuic_config_proto_depIdxs = []int32{
++	0, // [0:0] is the sub-list for method output_type
++	0, // [0:0] is the sub-list for method input_type
++	0, // [0:0] is the sub-list for extension type_name
++	0, // [0:0] is the sub-list for extension extendee
++	0, // [0:0] is the sub-list for field type_name
++}
++
++func init() { file_transport_internet_tuic_config_proto_init() }
++func file_transport_internet_tuic_config_proto_init() {
++	if File_transport_internet_tuic_config_proto != nil {
++		return
++	}
++	type x struct{}
++	out := protoimpl.TypeBuilder{
++		File: protoimpl.DescBuilder{
++			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
++			RawDescriptor: unsafe.Slice(unsafe.StringData(file_transport_internet_tuic_config_proto_rawDesc), len(file_transport_internet_tuic_config_proto_rawDesc)),
++			NumEnums:      0,
++			NumMessages:   1,
++			NumExtensions: 0,
++			NumServices:   0,
++		},
++		GoTypes:           file_transport_internet_tuic_config_proto_goTypes,
++		DependencyIndexes: file_transport_internet_tuic_config_proto_depIdxs,
++		MessageInfos:      file_transport_internet_tuic_config_proto_msgTypes,
++	}.Build()
++	File_transport_internet_tuic_config_proto = out.File
++	file_transport_internet_tuic_config_proto_goTypes = nil
++	file_transport_internet_tuic_config_proto_depIdxs = nil
++}
+diff --git a/transport/internet/tuic/config.proto b/transport/internet/tuic/config.proto
+new file mode 100644
+index 0000000..680df49
+--- /dev/null
++++ b/transport/internet/tuic/config.proto
+@@ -0,0 +1,18 @@
++syntax = "proto3";
++
++package xray.transport.internet.tuic;
++option csharp_namespace = "Xray.Transport.Internet.Tuic";
++option go_package = "github.com/xtls/xray-core/transport/internet/tuic";
++option java_package = "com.xray.transport.internet.tuic";
++option java_multiple_files = true;
++
++message Config {
++  // User UUID, canonical text form.
++  string uuid = 1;
++  string password = 2;
++  // "", "cubic", "new_reno" or "bbr".
++  string congestion_control = 3;
++  // "", "native" or "quic".
++  string udp_relay_mode = 4;
++  bool zero_rtt = 5;
++}
+diff --git a/transport/internet/tuic/conn.go b/transport/internet/tuic/conn.go
+new file mode 100644
+index 0000000..2e3e62f
+--- /dev/null
++++ b/transport/internet/tuic/conn.go
+@@ -0,0 +1,420 @@
++package tuic
++
++import (
++	"bytes"
++	"context"
++	go_errors "errors"
++	"io"
++	"sync"
++	"sync/atomic"
++	"time"
++
++	"github.com/apernet/quic-go"
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/common/net"
++)
++
++// tcpConn is the bidirectional QUIC stream of one TUIC Connect. The Connect header itself
++// (see AppendConnectHeader) is written by the proxy layer as the first bytes of the stream.
++type tcpConn struct {
++	stream *quic.Stream
++	local  net.Addr
++	remote net.Addr
++	wrote  atomic.Bool
++}
++
++func (c *tcpConn) Read(b []byte) (int, error) {
++	return c.stream.Read(b)
++}
++
++func (c *tcpConn) Write(b []byte) (int, error) {
++	c.wrote.Store(true)
++	return c.stream.Write(b)
++}
++
++func (c *tcpConn) Close() error {
++	c.stream.CancelRead(0)
++	if !c.wrote.Load() {
++		// Nothing was sent: do not leave an empty stream for the server to interpret.
++		c.stream.CancelWrite(0)
++		return nil
++	}
++	return c.stream.Close()
++}
++
++func (c *tcpConn) LocalAddr() net.Addr                { return c.local }
++func (c *tcpConn) RemoteAddr() net.Addr               { return c.remote }
++func (c *tcpConn) SetDeadline(t time.Time) error      { return c.stream.SetDeadline(t) }
++func (c *tcpConn) SetReadDeadline(t time.Time) error  { return c.stream.SetReadDeadline(t) }
++func (c *tcpConn) SetWriteDeadline(t time.Time) error { return c.stream.SetWriteDeadline(t) }
++
++type udpPacket struct {
++	addr net.Destination
++	data []byte
++}
++
++// fragSlot reassembles the fragments of one in-flight packet of an association.
++type fragSlot struct {
++	active bool
++	pktID  uint16
++	total  uint8
++	got    uint8
++	addr   *net.Destination
++	parts  [][]byte
++}
++
++// UDPConn is one TUIC UDP association (ASSOC_ID). Use WritePacket and ReadPacket; the net.Conn
++// methods exist only so the dialer can return it as a connection.
++type UDPConn struct {
++	m      *udpSessionManager
++	id     uint16
++	ch     chan udpPacket
++	closed bool // guarded by m
++
++	pktID atomic.Uint32
++
++	fragMu sync.Mutex
++	frag   fragSlot
++}
++
++func (c *UDPConn) nextPktID() uint16 {
++	return uint16(c.pktID.Add(1))
++}
++
++// WritePacket sends one UDP payload to dest through the server.
++func (c *UDPConn) WritePacket(dest net.Destination, data []byte) error {
++	if len(data) > 0xffff {
++		return errors.New("tuic: UDP payload too large")
++	}
++	return c.m.send(c, dest, data)
++}
++
++// ReadPacket blocks until a packet arrives from the server. It returns io.EOF after Close.
++func (c *UDPConn) ReadPacket() (net.Destination, []byte, error) {
++	p, ok := <-c.ch
++	if !ok {
++		return net.Destination{}, nil, io.EOF
++	}
++	return p.addr, p.data, nil
++}
++
++// reassemble joins fragments. It returns ok=false until a full packet with a known source is available.
++func (c *UDPConn) reassemble(h *packetHeader, data []byte) (udpPacket, bool) {
++	if h.FragTotal <= 1 {
++		if h.Addr == nil {
++			return udpPacket{}, false
++		}
++		return udpPacket{addr: *h.Addr, data: data}, true
++	}
++
++	c.fragMu.Lock()
++	defer c.fragMu.Unlock()
++
++	f := &c.frag
++	if !f.active || f.pktID != h.PktID || f.total != h.FragTotal {
++		*f = fragSlot{active: true, pktID: h.PktID, total: h.FragTotal, parts: make([][]byte, h.FragTotal)}
++	}
++	if h.FragID >= f.total {
++		return udpPacket{}, false
++	}
++	if f.parts[h.FragID] == nil {
++		part := make([]byte, len(data))
++		copy(part, data)
++		f.parts[h.FragID] = part
++		f.got++
++	}
++	if h.Addr != nil {
++		f.addr = h.Addr
++	}
++	if f.got < f.total || f.addr == nil {
++		return udpPacket{}, false
++	}
++
++	var out []byte
++	for _, p := range f.parts {
++		out = append(out, p...)
++	}
++	addr := *f.addr
++	*f = fragSlot{}
++	return udpPacket{addr: addr, data: out}, true
++}
++
++func (c *UDPConn) Close() error {
++	c.m.closeConn(c, true)
++	return nil
++}
++
++func (c *UDPConn) Read(b []byte) (int, error) {
++	_, data, err := c.ReadPacket()
++	if err != nil {
++		return 0, err
++	}
++	return copy(b, data), nil
++}
++
++func (c *UDPConn) Write(b []byte) (int, error) {
++	return 0, errors.New("tuic: use WritePacket on a UDP association")
++}
++
++func (c *UDPConn) LocalAddr() net.Addr                { return c.m.conn.LocalAddr() }
++func (c *UDPConn) RemoteAddr() net.Addr               { return c.m.conn.RemoteAddr() }
++func (c *UDPConn) SetDeadline(t time.Time) error      { return nil }
++func (c *UDPConn) SetReadDeadline(t time.Time) error  { return nil }
++func (c *UDPConn) SetWriteDeadline(t time.Time) error { return nil }
++
++// udpSessionManager owns all UDP associations of one QUIC connection.
++type udpSessionManager struct {
++	sync.RWMutex
++
++	conn     *quic.Conn
++	m        map[uint16]*UDPConn
++	next     uint16
++	closed   bool
++	quicMode bool // UDP relay mode "quic": one unidirectional stream per packet instead of datagrams
++}
++
++func newUDPSessionManager(conn *quic.Conn, quicMode bool) *udpSessionManager {
++	return &udpSessionManager{
++		conn:     conn,
++		m:        make(map[uint16]*UDPConn),
++		next:     1,
++		quicMode: quicMode,
++	}
++}
++
++func (m *udpSessionManager) newConn() (*UDPConn, error) {
++	m.Lock()
++	defer m.Unlock()
++
++	if m.closed {
++		return nil, errors.New("tuic: connection closed")
++	}
++	for i := 0; i <= 0xffff; i++ {
++		id := m.next
++		m.next++
++		if _, used := m.m[id]; used {
++			continue
++		}
++		c := &UDPConn{m: m, id: id, ch: make(chan udpPacket, udpMessageChanSize)}
++		m.m[id] = c
++		return c, nil
++	}
++	return nil, errors.New("tuic: no free UDP association id")
++}
++
++func (m *udpSessionManager) closeConn(c *UDPConn, dissociate bool) {
++	m.Lock()
++	if c.closed {
++		m.Unlock()
++		return
++	}
++	c.closed = true
++	close(c.ch)
++	delete(m.m, c.id)
++	connClosed := m.closed
++	m.Unlock()
++
++	if dissociate && !connClosed {
++		go m.dissociate(c.id)
++	}
++}
++
++// shutdown closes every association; called when the QUIC connection is gone.
++func (m *udpSessionManager) shutdown() {
++	m.Lock()
++	defer m.Unlock()
++
++	m.closed = true
++	for id, c := range m.m {
++		if !c.closed {
++			c.closed = true
++			close(c.ch)
++		}
++		delete(m.m, id)
++	}
++}
++
++func (m *udpSessionManager) dissociate(id uint16) {
++	ctx, cancel := context.WithTimeout(context.Background(), openStreamTimeout)
++	defer cancel()
++	s, err := m.conn.OpenUniStreamSync(ctx)
++	if err != nil {
++		return
++	}
++	if _, err := s.Write(AppendDissociate(nil, id)); err != nil {
++		s.CancelWrite(0)
++		return
++	}
++	_ = s.Close()
++}
++
++// runDatagrams feeds datagram Packets (native mode responses) into their associations.
++func (m *udpSessionManager) runDatagrams() {
++	for {
++		d, err := m.conn.ReceiveDatagram(context.Background())
++		if err != nil {
++			break
++		}
++		m.handleDatagram(d)
++	}
++	m.shutdown()
++}
++
++// uniReceiver is the part of a QUIC receive stream used here.
++type uniReceiver interface {
++	io.Reader
++	CancelRead(quic.StreamErrorCode)
++}
++
++// runUniStreams feeds Packets that the server sends on unidirectional streams (quic mode responses).
++func (m *udpSessionManager) runUniStreams() {
++	for {
++		s, err := m.conn.AcceptUniStream(context.Background())
++		if err != nil {
++			return
++		}
++		go m.handleUniStream(s)
++	}
++}
++
++func (m *udpSessionManager) handleDatagram(d []byte) {
++	r := bytes.NewReader(d)
++	cmd, err := readCommandHeader(r)
++	if err != nil || cmd != CmdPacket {
++		// Heartbeats and anything else carry nothing for us.
++		return
++	}
++	h, err := readPacketHeader(r)
++	if err != nil {
++		return
++	}
++	data := d[len(d)-r.Len():]
++	if len(data) < int(h.Size) {
++		return
++	}
++	m.feed(h, data[:h.Size])
++}
++
++func (m *udpSessionManager) handleUniStream(s uniReceiver) {
++	defer s.CancelRead(0)
++
++	cmd, err := readCommandHeader(s)
++	if err != nil || cmd != CmdPacket {
++		return
++	}
++	h, err := readPacketHeader(s)
++	if err != nil {
++		return
++	}
++	data := make([]byte, h.Size)
++	if _, err := io.ReadFull(s, data); err != nil {
++		return
++	}
++	m.feed(h, data)
++}
++
++func (m *udpSessionManager) feed(h *packetHeader, data []byte) {
++	m.RLock()
++	defer m.RUnlock()
++
++	c, ok := m.m[h.AssocID]
++	if !ok || c.closed {
++		return
++	}
++	p, ok := c.reassemble(h, data)
++	if !ok {
++		return
++	}
++	select {
++	case c.ch <- p:
++	default:
++	}
++}
++
++func (m *udpSessionManager) send(c *UDPConn, dest net.Destination, data []byte) error {
++	m.RLock()
++	closed := m.closed || c.closed
++	m.RUnlock()
++	if closed {
++		return io.ErrClosedPipe
++	}
++
++	h := packetHeader{
++		AssocID:   c.id,
++		PktID:     c.nextPktID(),
++		FragTotal: 1,
++		FragID:    0,
++		Size:      uint16(len(data)),
++		Addr:      &dest,
++	}
++	msg, err := h.append(make([]byte, 0, 64+len(data)))
++	if err != nil {
++		return err
++	}
++	msg = append(msg, data...)
++
++	if m.quicMode {
++		return m.sendOnStream(msg)
++	}
++
++	err = m.conn.SendDatagram(msg)
++	var tooLarge *quic.DatagramTooLargeError
++	if go_errors.As(err, &tooLarge) {
++		return m.sendFragments(&h, dest, data, int(tooLarge.MaxDatagramPayloadSize))
++	}
++	return err
++}
++
++func (m *udpSessionManager) sendOnStream(msg []byte) error {
++	ctx, cancel := context.WithTimeout(context.Background(), openStreamTimeout)
++	defer cancel()
++	s, err := m.conn.OpenUniStreamSync(ctx)
++	if err != nil {
++		return err
++	}
++	if _, err := s.Write(msg); err != nil {
++		s.CancelWrite(0)
++		return err
++	}
++	return s.Close()
++}
++
++// sendFragments splits a payload that does not fit into one datagram.
++func (m *udpSessionManager) sendFragments(first *packetHeader, dest net.Destination, data []byte, maxPayload int) error {
++	addr, err := AppendAddress(nil, dest)
++	if err != nil {
++		return err
++	}
++	chunk := maxPayload - (packetHeaderLength + len(addr))
++	if chunk <= 0 {
++		return errors.New("tuic: datagram size too small for UDP relay")
++	}
++	total := (len(data) + chunk - 1) / chunk
++	if total > 0xff {
++		return errors.New("tuic: UDP payload needs too many fragments")
++	}
++
++	for i := 0; i < total; i++ {
++		end := min((i+1)*chunk, len(data))
++		part := data[i*chunk : end]
++		h := packetHeader{
++			AssocID:   first.AssocID,
++			PktID:     first.PktID,
++			FragTotal: uint8(total),
++			FragID:    uint8(i),
++			Size:      uint16(len(part)),
++		}
++		if i == 0 {
++			h.Addr = &dest
++		}
++		msg, err := h.append(make([]byte, 0, packetHeaderLength+len(addr)+len(part)))
++		if err != nil {
++			return err
++		}
++		msg = append(msg, part...)
++		if err := m.conn.SendDatagram(msg); err != nil {
++			return err
++		}
++	}
++	return nil
++}
+diff --git a/transport/internet/tuic/dialer.go b/transport/internet/tuic/dialer.go
+new file mode 100644
+index 0000000..8c1688f
+--- /dev/null
++++ b/transport/internet/tuic/dialer.go
+@@ -0,0 +1,364 @@
++package tuic
++
++import (
++	"context"
++	gotls "crypto/tls"
++	"reflect"
++	"runtime"
++	"sync"
++	"time"
++
++	"github.com/apernet/quic-go"
++	"github.com/google/uuid"
++	"github.com/xtls/xray-core/common"
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/common/net/cnc"
++	"github.com/xtls/xray-core/core"
++	"github.com/xtls/xray-core/transport/internet"
++	"github.com/xtls/xray-core/transport/internet/finalmask"
++	"github.com/xtls/xray-core/transport/internet/hysteria/congestion"
++	"github.com/xtls/xray-core/transport/internet/hysteria/congestion/bbr"
++	"github.com/xtls/xray-core/transport/internet/stat"
++	"github.com/xtls/xray-core/transport/internet/tls"
++)
++
++type client struct {
++	lock         chan struct{}
++	instance     *core.Instance
++	forced       bool
++	dest         net.Destination
++	config       *Config
++	uuid         [16]byte
++	tlsConfig    *gotls.Config
++	socketConfig *internet.SocketConfig
++	finalMask    *finalmask.FinalMask
++	quicParams   *internet.QuicParams
++
++	conn    *quic.Conn
++	tr      *quic.Transport
++	pktConn net.PacketConn
++	udpSM   *udpSessionManager
++}
++
++func (c *client) status() status {
++	if c.conn == nil {
++		return StatusNull
++	}
++	select {
++	case <-c.conn.Context().Done():
++		return StatusInactive
++	default:
++		return StatusActive
++	}
++}
++
++func (c *client) close() {
++	c.conn.CloseWithError(closeErrCodeOK, "")
++	c.tr.Close()
++	c.pktConn.Close()
++	c.conn = nil
++	c.tr = nil
++	c.pktConn = nil
++	c.udpSM = nil
++}
++
++func (c *client) abort(tr *quic.Transport, pktConn net.PacketConn, conn *quic.Conn) {
++	if conn != nil {
++		_ = conn.CloseWithError(closeErrCodeOK, "")
++	}
++	_ = tr.Close()
++	_ = pktConn.Close()
++}
++
++func (c *client) dial(ctx context.Context) error {
++	if c.forced {
++		return errors.New("client is closed")
++	}
++
++	switch c.status() {
++	case StatusActive:
++		return nil
++	case StatusInactive:
++		c.close()
++	}
++
++	quicParams := c.quicParams
++	if quicParams == nil {
++		quicParams = &internet.QuicParams{
++			BbrProfile: string(bbr.ProfileStandard),
++		}
++	}
++
++	quicConfig := &quic.Config{
++		InitialStreamReceiveWindow:     quicParams.InitStreamReceiveWindow,
++		MaxStreamReceiveWindow:         quicParams.MaxStreamReceiveWindow,
++		InitialConnectionReceiveWindow: quicParams.InitConnReceiveWindow,
++		MaxConnectionReceiveWindow:     quicParams.MaxConnReceiveWindow,
++		MaxIdleTimeout:                 time.Duration(quicParams.MaxIdleTimeout) * time.Second,
++		KeepAlivePeriod:                time.Duration(quicParams.KeepAlivePeriod) * time.Second,
++		DisablePathMTUDiscovery:        quicParams.DisablePathMtuDiscovery || (runtime.GOOS != "linux" && runtime.GOOS != "windows" && runtime.GOOS != "darwin"),
++		// The server needs our max_datagram_frame_size to answer in native UDP relay mode,
++		// so unlike Hysteria this transport does not omit it.
++		EnableDatagrams:    true,
++		DisablePathManager: true,
++	}
++	if quicParams.InitStreamReceiveWindow == 0 {
++		quicConfig.InitialStreamReceiveWindow = 8388608
++	}
++	if quicParams.MaxStreamReceiveWindow == 0 {
++		quicConfig.MaxStreamReceiveWindow = 8388608
++	}
++	if quicParams.InitConnReceiveWindow == 0 {
++		quicConfig.InitialConnectionReceiveWindow = 8388608 * 5 / 2
++	}
++	if quicParams.MaxConnReceiveWindow == 0 {
++		quicConfig.MaxConnectionReceiveWindow = 8388608 * 5 / 2
++	}
++	if quicParams.MaxIdleTimeout == 0 {
++		quicConfig.MaxIdleTimeout = maxIdleTimeout
++	}
++	if quicParams.KeepAlivePeriod == 0 {
++		quicConfig.KeepAlivePeriod = keepAlivePeriod
++	}
++
++	var pktConn net.PacketConn
++	var udpAddr net.Addr
++	if c.finalMask != nil {
++		conn, err := c.finalMask.DialUDP(ctx, c.dest)
++		if err != nil {
++			return errors.New("failed to dial to dest").Base(err)
++		}
++		pktConn = conn.(*net.PacketConnWrapper).PacketConn
++		udpAddr = conn.RemoteAddr()
++	} else {
++		conn, err := internet.DialSystem(ctx, c.dest, c.socketConfig)
++		if err != nil {
++			return errors.New("failed to dial to dest").Base(err)
++		}
++		switch c := conn.(type) {
++		case *net.PacketConnWrapper:
++			pktConn = c.PacketConn
++			udpAddr = c.RemoteAddr()
++		case *cnc.Connection:
++			pktConn = &internet.FakePacketConn{Conn: c}
++			udpAddr = &net.UDPAddr{IP: []byte{0, 0, 0, 0}}
++		default:
++			panic(reflect.TypeOf(c))
++		}
++	}
++
++	tr := &quic.Transport{Conn: pktConn, DisableGSO: quicParams.DisableGSO}
++
++	var conn *quic.Conn
++	var err error
++	if c.config.ZeroRtt {
++		conn, err = tr.DialEarly(ctx, udpAddr, c.tlsConfig, quicConfig)
++	} else {
++		conn, err = tr.Dial(ctx, udpAddr, c.tlsConfig, quicConfig)
++	}
++	if err != nil {
++		c.abort(tr, pktConn, nil)
++		return errors.New("failed to establish QUIC connection").Base(err)
++	}
++
++	// The authentication token is derived from the TLS session, so the handshake must be complete.
++	select {
++	case <-conn.HandshakeComplete():
++	case <-ctx.Done():
++		c.abort(tr, pktConn, conn)
++		return ctx.Err()
++	}
++
++	if err := c.authenticate(ctx, conn); err != nil {
++		c.abort(tr, pktConn, conn)
++		return err
++	}
++
++	if c.config.CongestionControl == CongestionBBR {
++		congestion.UseBBR(conn, bbr.Profile(quicParams.BbrProfile))
++	}
++	// "cubic" (default) and "new_reno" keep the QUIC stack's own loss-based controller.
++
++	c.pktConn = pktConn
++	c.tr = tr
++	c.conn = conn
++	c.udpSM = newUDPSessionManager(conn, c.config.UdpRelayMode == UDPRelayQUIC)
++	go c.udpSM.runDatagrams()
++	go c.udpSM.runUniStreams()
++
++	return nil
++}
++
++// authenticate sends the Authenticate command on a unidirectional stream.
++func (c *client) authenticate(ctx context.Context, conn *quic.Conn) error {
++	state := conn.ConnectionState()
++	token, err := state.TLS.ExportKeyingMaterial(string(c.uuid[:]), []byte(c.config.Password), tokenLength)
++	if err != nil {
++		return errors.New("failed to derive TUIC token").Base(err)
++	}
++
++	openCtx, cancel := context.WithTimeout(ctx, openStreamTimeout)
++	defer cancel()
++	s, err := conn.OpenUniStreamSync(openCtx)
++	if err != nil {
++		return errors.New("failed to open authentication stream").Base(err)
++	}
++	if _, err := s.Write(AppendAuthenticate(nil, c.uuid, token)); err != nil {
++		s.CancelWrite(0)
++		return errors.New("failed to send authentication").Base(err)
++	}
++	return s.Close()
++}
++
++func (c *client) unlock() {
++	<-c.lock
++}
++
++func (c *client) tcp(ctx context.Context) (stat.Connection, error) {
++	select {
++	case <-ctx.Done():
++		return nil, ctx.Err()
++	case c.lock <- struct{}{}:
++		defer c.unlock()
++	}
++
++	err := c.dial(ctx)
++	if err != nil {
++		return nil, err
++	}
++
++	stream, err := c.conn.OpenStreamSync(ctx)
++	if err != nil {
++		return nil, err
++	}
++
++	return &tcpConn{
++		stream: stream,
++		local:  c.conn.LocalAddr(),
++		remote: c.conn.RemoteAddr(),
++	}, nil
++}
++
++func (c *client) udp(ctx context.Context) (stat.Connection, error) {
++	select {
++	case <-ctx.Done():
++		return nil, ctx.Err()
++	case c.lock <- struct{}{}:
++		defer c.unlock()
++	}
++
++	err := c.dial(ctx)
++	if err != nil {
++		return nil, err
++	}
++
++	return c.udpSM.newConn()
++}
++
++func (c *client) clean(force bool) {
++	c.lock <- struct{}{}
++	if force {
++		c.forced = true
++	}
++	if status := c.status(); force && status != StatusNull || status == StatusInactive {
++		c.close()
++	}
++	c.unlock()
++}
++
++type dialerConf struct {
++	net.Destination
++	*internet.MemoryStreamConfig
++}
++
++type clientManager struct {
++	sync.RWMutex
++	m map[dialerConf]*client
++}
++
++func (m *clientManager) clean() {
++	ticker := time.NewTicker(idleCleanupInterval)
++	for range ticker.C {
++		m.RLock()
++		entries := make(map[dialerConf]*client, len(m.m))
++		for k, c := range m.m {
++			entries[k] = c
++		}
++		m.RUnlock()
++		for k, c := range entries {
++			force := c.instance != nil && !c.instance.IsRunning()
++			c.clean(force)
++			if force {
++				m.Lock()
++				delete(m.m, k)
++				m.Unlock()
++			}
++		}
++	}
++}
++
++var (
++	manager     *clientManager
++	initmanager sync.Once
++)
++
++func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (stat.Connection, error) {
++	tlsConfig := tls.ConfigFromStreamSettings(streamSettings)
++	if tlsConfig == nil {
++		return nil, errors.New("tls config is nil")
++	}
++	config, ok := streamSettings.ProtocolSettings.(*Config)
++	if !ok {
++		return nil, errors.New("not tuic transport")
++	}
++	id, err := uuid.Parse(config.Uuid)
++	if err != nil {
++		return nil, errors.New("invalid TUIC uuid").Base(err)
++	}
++
++	datagram := DatagramFromContext(ctx)
++	dest.Network = net.Network_UDP
++
++	initmanager.Do(func() {
++		manager = &clientManager{
++			m: make(map[dialerConf]*client),
++		}
++		go manager.clean()
++	})
++
++	dialerConfKey := dialerConf{dest, streamSettings}
++
++	manager.RLock()
++	c := manager.m[dialerConfKey]
++	manager.RUnlock()
++
++	if c == nil {
++		manager.Lock()
++		c = manager.m[dialerConfKey]
++		if c == nil {
++			c = &client{
++				lock:         make(chan struct{}, 1),
++				instance:     core.FromContext(ctx),
++				dest:         dest,
++				config:       config,
++				uuid:         id,
++				tlsConfig:    tlsConfig.GetTLSConfig(tls.WithDestination(dest)),
++				socketConfig: streamSettings.SocketSettings,
++				finalMask:    streamSettings.FinalMask,
++				quicParams:   streamSettings.QuicParams,
++			}
++			manager.m[dialerConfKey] = c
++		}
++		manager.Unlock()
++	}
++
++	if datagram {
++		return c.udp(ctx)
++	}
++	return c.tcp(ctx)
++}
++
++func init() {
++	common.Must(internet.RegisterTransportDialer(protocolName, Dial))
++}
+diff --git a/transport/internet/tuic/protocol.go b/transport/internet/tuic/protocol.go
+new file mode 100644
+index 0000000..5036e18
+--- /dev/null
++++ b/transport/internet/tuic/protocol.go
+@@ -0,0 +1,167 @@
++package tuic
++
++import (
++	"encoding/binary"
++	"io"
++
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/common/net"
++)
++
++// AppendAddress appends ADDR (TYPE, address, PORT) to b.
++func AppendAddress(b []byte, dest net.Destination) ([]byte, error) {
++	addr := dest.Address
++	if addr == nil {
++		return nil, errors.New("tuic: empty address")
++	}
++	switch family := addr.Family(); {
++	case family.IsIPv4():
++		ip := addr.IP().To4()
++		if ip == nil {
++			return nil, errors.New("tuic: invalid IPv4 address")
++		}
++		b = append(b, AddrTypeIPv4)
++		b = append(b, ip...)
++	case family.IsIPv6():
++		ip := addr.IP().To16()
++		if ip == nil {
++			return nil, errors.New("tuic: invalid IPv6 address")
++		}
++		b = append(b, AddrTypeIPv6)
++		b = append(b, ip...)
++	case family.IsDomain():
++		domain := addr.Domain()
++		if len(domain) == 0 || len(domain) > 255 {
++			return nil, errors.New("tuic: invalid domain length ", len(domain))
++		}
++		b = append(b, AddrTypeDomain, byte(len(domain)))
++		b = append(b, domain...)
++	default:
++		return nil, errors.New("tuic: unsupported address family")
++	}
++	return binary.BigEndian.AppendUint16(b, dest.Port.Value()), nil
++}
++
++// ReadAddress parses ADDR from r. It returns a nil destination for the "none" address type,
++// which is only used by non-first fragments of a Packet.
++func ReadAddress(r io.Reader) (*net.Destination, error) {
++	var t [1]byte
++	if _, err := io.ReadFull(r, t[:]); err != nil {
++		return nil, err
++	}
++
++	var addr net.Address
++	switch t[0] {
++	case AddrTypeNone:
++		return nil, nil
++	case AddrTypeIPv4:
++		var ip [4]byte
++		if _, err := io.ReadFull(r, ip[:]); err != nil {
++			return nil, err
++		}
++		addr = net.IPAddress(ip[:])
++	case AddrTypeIPv6:
++		var ip [16]byte
++		if _, err := io.ReadFull(r, ip[:]); err != nil {
++			return nil, err
++		}
++		addr = net.IPAddress(ip[:])
++	case AddrTypeDomain:
++		var l [1]byte
++		if _, err := io.ReadFull(r, l[:]); err != nil {
++			return nil, err
++		}
++		domain := make([]byte, l[0])
++		if _, err := io.ReadFull(r, domain); err != nil {
++			return nil, err
++		}
++		addr = net.DomainAddress(string(domain))
++	default:
++		return nil, errors.New("tuic: unknown address type ", t[0])
++	}
++	if addr == nil {
++		return nil, errors.New("tuic: invalid address")
++	}
++
++	var p [2]byte
++	if _, err := io.ReadFull(r, p[:]); err != nil {
++		return nil, err
++	}
++	dest := net.UDPDestination(addr, net.Port(binary.BigEndian.Uint16(p[:])))
++	return &dest, nil
++}
++
++// AppendConnectHeader appends the Connect command (VER, TYPE, ADDR) that opens a TCP relay stream.
++func AppendConnectHeader(b []byte, target net.Destination) ([]byte, error) {
++	b = append(b, Version, CmdConnect)
++	return AppendAddress(b, target)
++}
++
++// AppendAuthenticate appends the Authenticate command.
++func AppendAuthenticate(b []byte, uuid [16]byte, token []byte) []byte {
++	b = append(b, Version, CmdAuthenticate)
++	b = append(b, uuid[:]...)
++	return append(b, token...)
++}
++
++// AppendDissociate appends the Dissociate command that ends a UDP association.
++func AppendDissociate(b []byte, assocID uint16) []byte {
++	b = append(b, Version, CmdDissociate)
++	return binary.BigEndian.AppendUint16(b, assocID)
++}
++
++// packetHeader is the Packet command (without VER and TYPE handling on the read side).
++type packetHeader struct {
++	AssocID   uint16
++	PktID     uint16
++	FragTotal uint8
++	FragID    uint8
++	Size      uint16
++	// Addr is nil when the address type is "none".
++	Addr *net.Destination
++}
++
++func (h *packetHeader) append(b []byte) ([]byte, error) {
++	b = append(b, Version, CmdPacket)
++	b = binary.BigEndian.AppendUint16(b, h.AssocID)
++	b = binary.BigEndian.AppendUint16(b, h.PktID)
++	b = append(b, h.FragTotal, h.FragID)
++	b = binary.BigEndian.AppendUint16(b, h.Size)
++	if h.Addr == nil {
++		return append(b, AddrTypeNone), nil
++	}
++	return AppendAddress(b, *h.Addr)
++}
++
++// readCommandHeader reads VER and TYPE.
++func readCommandHeader(r io.Reader) (byte, error) {
++	var h [2]byte
++	if _, err := io.ReadFull(r, h[:]); err != nil {
++		return 0, err
++	}
++	if h[0] != Version {
++		return 0, errors.New("tuic: unsupported version ", h[0])
++	}
++	return h[1], nil
++}
++
++// readPacketHeader reads the fields of a Packet command that follow VER and TYPE.
++func readPacketHeader(r io.Reader) (*packetHeader, error) {
++	var f [8]byte
++	if _, err := io.ReadFull(r, f[:]); err != nil {
++		return nil, err
++	}
++	h := &packetHeader{
++		AssocID:   binary.BigEndian.Uint16(f[0:2]),
++		PktID:     binary.BigEndian.Uint16(f[2:4]),
++		FragTotal: f[4],
++		FragID:    f[5],
++		Size:      binary.BigEndian.Uint16(f[6:8]),
++	}
++	addr, err := ReadAddress(r)
++	if err != nil {
++		return nil, err
++	}
++	h.Addr = addr
++	return h, nil
++}
+diff --git a/transport/internet/tuic/protocol_test.go b/transport/internet/tuic/protocol_test.go
+new file mode 100644
+index 0000000..3fd90a4
+--- /dev/null
++++ b/transport/internet/tuic/protocol_test.go
+@@ -0,0 +1,171 @@
++package tuic
++
++import (
++	"bytes"
++	"testing"
++
++	"github.com/xtls/xray-core/common/net"
++)
++
++func dest(t *testing.T, s string) net.Destination {
++	t.Helper()
++	d, err := net.ParseDestination(s)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return d
++}
++
++func TestAddressRoundTrip(t *testing.T) {
++	for _, in := range []string{
++		"udp:1.2.3.4:53",
++		"udp:[2001:db8::1]:443",
++		"udp:example.com:8443",
++	} {
++		want := dest(t, in)
++		b, err := AppendAddress(nil, want)
++		if err != nil {
++			t.Fatalf("%s: %v", in, err)
++		}
++		got, err := ReadAddress(bytes.NewReader(b))
++		if err != nil || got == nil {
++			t.Fatalf("%s: read: %v %v", in, got, err)
++		}
++		if got.Address.String() != want.Address.String() || got.Port != want.Port {
++			t.Errorf("%s: got %v want %v", in, got, want)
++		}
++	}
++}
++
++func TestAddressWireFormat(t *testing.T) {
++	b, err := AppendAddress(nil, dest(t, "tcp:1.2.3.4:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if want := []byte{AddrTypeIPv4, 1, 2, 3, 4, 0x01, 0xbb}; !bytes.Equal(b, want) {
++		t.Errorf("ipv4: got % x want % x", b, want)
++	}
++
++	b, err = AppendAddress(nil, dest(t, "tcp:a.io:80"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if want := []byte{AddrTypeDomain, 4, 'a', '.', 'i', 'o', 0x00, 0x50}; !bytes.Equal(b, want) {
++		t.Errorf("domain: got % x want % x", b, want)
++	}
++}
++
++func TestNoneAddressHasNoPort(t *testing.T) {
++	d, err := ReadAddress(bytes.NewReader([]byte{AddrTypeNone, 0xaa}))
++	if err != nil || d != nil {
++		t.Fatalf("got %v %v", d, err)
++	}
++}
++
++func TestConnectAndAuthenticateWireFormat(t *testing.T) {
++	b, err := AppendConnectHeader(nil, dest(t, "tcp:1.2.3.4:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if want := []byte{0x05, 0x01, AddrTypeIPv4, 1, 2, 3, 4, 0x01, 0xbb}; !bytes.Equal(b, want) {
++		t.Errorf("connect: got % x want % x", b, want)
++	}
++
++	var id [16]byte
++	for i := range id {
++		id[i] = byte(i)
++	}
++	token := bytes.Repeat([]byte{0xee}, tokenLength)
++	a := AppendAuthenticate(nil, id, token)
++	if len(a) != 2+16+tokenLength || a[0] != 0x05 || a[1] != 0x00 || !bytes.Equal(a[2:18], id[:]) || !bytes.Equal(a[18:], token) {
++		t.Errorf("authenticate: % x", a)
++	}
++
++	if got, want := AppendDissociate(nil, 0x0102), []byte{0x05, 0x03, 0x01, 0x02}; !bytes.Equal(got, want) {
++		t.Errorf("dissociate: got % x want % x", got, want)
++	}
++}
++
++func TestPacketHeaderRoundTrip(t *testing.T) {
++	d := dest(t, "udp:example.com:53")
++	in := packetHeader{AssocID: 7, PktID: 9, FragTotal: 1, FragID: 0, Size: 3, Addr: &d}
++	b, err := in.append(nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	r := bytes.NewReader(b)
++	cmd, err := readCommandHeader(r)
++	if err != nil || cmd != CmdPacket {
++		t.Fatalf("cmd %v %v", cmd, err)
++	}
++	out, err := readPacketHeader(r)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if out.AssocID != 7 || out.PktID != 9 || out.FragTotal != 1 || out.FragID != 0 || out.Size != 3 || out.Addr == nil || out.Addr.Port != 53 {
++		t.Errorf("got %+v", out)
++	}
++	if r.Len() != 0 {
++		t.Errorf("%d trailing bytes", r.Len())
++	}
++}
++
++func TestPacketHeaderLengthConstant(t *testing.T) {
++	// A Packet without an address still carries the 1-byte "none" type.
++	h := packetHeader{FragTotal: 1}
++	b, err := h.append(nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(b) != packetHeaderLength+1 {
++		t.Errorf("header is %d bytes, constant says %d+1", len(b), packetHeaderLength)
++	}
++}
++
++func TestUnsupportedVersionRejected(t *testing.T) {
++	if _, err := readCommandHeader(bytes.NewReader([]byte{0x04, CmdPacket})); err == nil {
++		t.Error("expected error for version 4")
++	}
++}
++
++func TestReassemble(t *testing.T) {
++	c := &UDPConn{}
++	d := dest(t, "udp:1.1.1.1:53")
++
++	// Out-of-order fragments; only the first one carries the address.
++	if _, ok := c.reassemble(&packetHeader{PktID: 1, FragTotal: 3, FragID: 2}, []byte("cc")); ok {
++		t.Fatal("complete too early")
++	}
++	if _, ok := c.reassemble(&packetHeader{PktID: 1, FragTotal: 3, FragID: 0, Addr: &d}, []byte("aa")); ok {
++		t.Fatal("complete too early")
++	}
++	p, ok := c.reassemble(&packetHeader{PktID: 1, FragTotal: 3, FragID: 1}, []byte("bb"))
++	if !ok {
++		t.Fatal("not complete")
++	}
++	if string(p.data) != "aabbcc" || p.addr.Port != 53 {
++		t.Errorf("got %q %v", p.data, p.addr)
++	}
++
++	// The slot is free again and a new packet id starts over.
++	if _, ok := c.reassemble(&packetHeader{PktID: 2, FragTotal: 2, FragID: 1}, []byte("y")); ok {
++		t.Fatal("complete too early")
++	}
++	if _, ok := c.reassemble(&packetHeader{PktID: 3, FragTotal: 2, FragID: 0, Addr: &d}, []byte("x")); ok {
++		t.Fatal("a fragment of another packet must not complete this one")
++	}
++}
++
++func TestReassembleSingleFragment(t *testing.T) {
++	c := &UDPConn{}
++	d := dest(t, "udp:1.1.1.1:53")
++
++	p, ok := c.reassemble(&packetHeader{PktID: 1, FragTotal: 1, Addr: &d}, []byte("hi"))
++	if !ok || string(p.data) != "hi" {
++		t.Fatalf("got %v %v", p, ok)
++	}
++	if _, ok := c.reassemble(&packetHeader{PktID: 2, FragTotal: 1}, []byte("hi")); ok {
++		t.Error("a packet without a source address must be dropped")
++	}
++}

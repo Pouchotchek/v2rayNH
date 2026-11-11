@@ -1,6 +1,5 @@
 package com.v2ray.ang.handler
 
-import android.annotation.SuppressLint
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -12,9 +11,16 @@ import androidx.work.multiprocess.RemoteWorkManager
 import androidx.work.workDataOf
 import com.v2ray.ang.AngApplication
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.dto.SubscriptionUpdateMessage
-import com.v2ray.ang.helper.MessageHelper
+import com.v2ray.ang.core.CoreNativeManager
+import com.v2ray.ang.dto.RealPingEvent
+import com.v2ray.ang.dto.entities.SubscriptionCache
+import com.v2ray.ang.dto.entities.SubscriptionItem
+import com.v2ray.ang.service.RealPingWorkerService
 import com.v2ray.ang.util.LogUtil
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 object SubscriptionUpdater {
@@ -43,7 +49,7 @@ object SubscriptionUpdater {
             }
 
         MmkvManager.decodeSubscriptions()
-            .filter { it.subscription.autoUpdate && it.subscription.url.isNotEmpty() }
+            .filter { it.subscription.autoUpdate && it.subscription.url.isNotBlank() }
             .forEach { sub ->
                 scheduleOne(
                     context = context,
@@ -78,15 +84,11 @@ object SubscriptionUpdater {
             .cancelUniqueWork(taskName(subId))
     }
 
-    /**
-     * Update the last updated timestamp and reschedule the task.
-     * This is used to reset the periodic timer and prevent rapid rescheduling loops.
-     */
-    fun updateLastUpdatedAndReschedule(context: Context = AngApplication.application, subId: String) {
-        val subItem = MmkvManager.decodeSubscription(subId) ?: return
-        subItem.lastUpdated = System.currentTimeMillis()
-        MmkvManager.encodeSubscription(subId, subItem)
-        syncOne(context, subId)
+    internal fun isDue(subscription: SubscriptionItem, now: Long): Boolean {
+        if (!subscription.enabled || !subscription.autoUpdate || subscription.url.isBlank()) return false
+        val interval = maxOf(AppConfig.SUBSCRIPTION_MIN_INTERVAL_MINUTES, subscription.updateInterval)
+        return subscription.lastUpdated <= 0 ||
+                now - subscription.lastUpdated >= TimeUnit.MINUTES.toMillis(interval)
     }
 
     // -------------------------------------------------------------------------
@@ -102,14 +104,9 @@ object SubscriptionUpdater {
     ) {
         val subItem = MmkvManager.decodeSubscription(subId) ?: return
         val rw = RemoteWorkManager.getInstance(context)
-        if (!subItem.autoUpdate) {
+        if (!subItem.autoUpdate || !subItem.enabled || subItem.url.isBlank()) {
             cancelOne(context, subId)
             LogUtil.d(AppConfig.TAG, "SubscriptionUpdater: cancelled task for ${subItem.remarks}")
-            return
-        }
-
-        if (subItem.url.isEmpty()) {
-            LogUtil.i(AppConfig.TAG, "SubscriptionUpdater: url isEmpty for ${subItem.remarks}, skip")
             return
         }
 
@@ -120,12 +117,12 @@ object SubscriptionUpdater {
 
         // Base initial delay on the last successful update time persisted in subscription.
         val lastUpdated = subItem.lastUpdated
-        val intervalMillis = intervalMinutes * 60 * 1000L
+        val intervalMillis = TimeUnit.MINUTES.toMillis(intervalMinutes)
         val now = System.currentTimeMillis()
         var initialDelayMillis = if (lastUpdated <= 0L) {
             0L
         } else {
-            maxOf(0L, lastUpdated + intervalMillis - now)
+            (intervalMillis - (now - lastUpdated).coerceAtLeast(0L)).coerceAtLeast(0L)
         }
 
         // Add a small floor to initial delay to prevent rapid rescheduling loops.
@@ -166,24 +163,54 @@ object SubscriptionUpdater {
     class UpdateTask(context: Context, params: WorkerParameters) :
         CoroutineWorker(context, params) {
 
-        @SuppressLint("MissingPermission")
-        override suspend fun doWork(): Result {
-            val subId = inputData.getString(KEY_SUB_ID)
-            LogUtil.i(AppConfig.TAG, "SubscriptionUpdater update starting via Service: $subId")
-
-            if (subId.isNullOrEmpty()) {
-                LogUtil.w(AppConfig.TAG, "SubscriptionUpdater: missing subId in worker input")
-                return Result.success()
-            }
-
-            updateLastUpdatedAndReschedule(applicationContext, subId)
-
-            MessageHelper.sendMsg2SubscriptionService(
-                applicationContext,
-                SubscriptionUpdateMessage(AppConfig.MSG_SUB_UPDATE_START, true, listOf(subId))
+        override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+            val subId = inputData.getString(KEY_SUB_ID)?.takeIf { it.isNotBlank() }
+                ?: return@withContext Result.failure()
+            val subscription = MmkvManager.decodeSubscription(subId) ?: return@withContext Result.success()
+            val result = AngConfigManager.updateConfigViaSub(
+                SubscriptionCache(subId, subscription),
+                onlyIfDue = true,
+                resetSchedule = false,
             )
+            if (result.failureCount > 0) return@withContext Result.retry()
+            if (result.successCount > 0 &&
+                MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_TEST_AFTER_UPDATE_SUBSCRIPTION, false)
+            ) {
+                try {
+                    testUpdatedProfiles(subId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    LogUtil.e(AppConfig.TAG, "Background subscription checks failed for $subId", error)
+                }
+            }
+            Result.success()
+        }
 
-            return Result.success()
+        private suspend fun testUpdatedProfiles(subId: String) {
+            val guids = MmkvManager.decodeServerList(subId)
+            if (guids.isEmpty()) return
+            CoreNativeManager.initCoreEnv(applicationContext)
+            val completed = CompletableDeferred<Unit>()
+            val worker = RealPingWorkerService(applicationContext, guids) { event ->
+                when (event) {
+                    is RealPingEvent.Result -> MmkvManager.encodeServerTestDelayMillis(event.guid, event.delayMillis)
+                    is RealPingEvent.Finish -> completed.complete(Unit)
+                    is RealPingEvent.Progress -> Unit
+                }
+            }
+            try {
+                worker.start()
+                completed.await()
+            } finally {
+                worker.cancel()
+            }
+            if (MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_REMOVE_INVALID_AFTER_TEST, false)) {
+                AngConfigManager.removeInvalidServer(subId)
+            }
+            if (MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)) {
+                AngConfigManager.sortByTestResultsForSub(subId)
+            }
         }
     }
 }

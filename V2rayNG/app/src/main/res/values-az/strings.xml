@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">v2rayNG</string>
+    <string name="app_name" translatable="false">v2rayNH</string>
     <string name="app_widget_name">Keçid</string>
     <string name="app_tile_name">Keçid</string>
     <string name="app_tile_first_use">Bu funksiyanı istifadə etməzdən əvvəl tətbiqə profil əlavə edin.</string>
@@ -45,6 +45,7 @@
     <string name="menu_item_import_config_manually_trojan">[Trojan] əlavə et</string>
     <string name="menu_item_import_config_manually_wireguard">[WireGuard] əlavə et</string>
     <string name="menu_item_import_config_manually_hysteria2">[Hysteria2] əlavə et</string>
+    <string name="menu_item_import_config_manually_tuic">[TUIC] əlavə et</string>
     <string name="confirm_delete_visible_profiles">Hazırda göstərilən bütün profilləri silmək istədiyinizə əminsiniz?</string>
     <string name="confirm_delete_duplicate_profiles">Hazırda göstərilən bütün təkrar profilləri silmək istədiyinizə əminsiniz?</string>
     <string name="confirm_delete_invalid_profiles">Zəhmət olmasa əvvəlcə profilləri sınaqdan keçirin. Hazırda göstərilən bütün yararsız profilləri silmək istədiyinizə əminsiniz?</string>
@@ -131,6 +132,9 @@
     <string name="server_lab_xhttp_mode">XHTTP Rejimi</string>
     <string name="server_lab_xhttp_extra">XHTTP Əlavə xam JSON, format: { XHTTPObject }</string>
     <string name="server_lab_final_mask">finalMask xam JSON, format: { FinalMaskObject }</string>
+    <string name="server_lab_congestion_control">Tıxac nəzarəti</string>
+    <string name="server_lab_udp_relay_mode">UDP relay rejimi</string>
+    <string name="server_lab_zero_rtt">Zero-RTT əl sıxma</string>
     <string name="server_lab_ech_config_list" translatable="false">echConfigList</string>
     <string name="server_lab_verify_peer_cert_by_name">Qarşı tərəf sertifikatını ada görə doğrulayın</string>
     <string name="server_lab_pinned_ca256">Sertifikatın barmaq izi (SHA-256)</string>
@@ -565,4 +569,5 @@
     <string name="sub_info_traffic" translatable="false">%1$s / %2$s</string>
     <string name="sub_info_unlimited">Limitsiz</string>
 
+    <string name="subscription_untitled">Abunəlik</string>
 </resources>

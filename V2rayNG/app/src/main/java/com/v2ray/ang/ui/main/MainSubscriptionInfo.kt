@@ -25,9 +25,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.SubscriptionUsageInfo
 import com.v2ray.ang.extension.toTrafficString
@@ -36,7 +37,6 @@ import com.v2ray.ang.util.Utils
 
 private const val MILLIS_PER_SECOND = 1000L
 private const val EXPIRY_DATE_PATTERN = "yyyy-MM-dd"
-private const val CARD_ALPHA = 0.97f
 
 /** Locale-neutral values the subscription information box renders. */
 internal data class SubscriptionInfoUiModel(
@@ -78,13 +78,11 @@ internal fun buildSubscriptionInfoUiModel(
 }
 
 /**
- * Fixed box on top of a subscription group showing the account information published by the
- * subscription panel: traffic, expiry date and shortcuts (support link, panel page, update).
+ * Account information and shortcuts at the start of a subscription group.
  */
 @Composable
 internal fun SubscriptionInfoCard(
     info: SubscriptionUsageInfo,
-    fallbackTitle: String,
     onOpenLink: (String) -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
@@ -96,20 +94,27 @@ internal fun SubscriptionInfoCard(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp),
         shape = MaterialTheme.shapes.medium,
-        // Almost opaque: the list scrolls underneath without showing through readably.
-        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = CARD_ALPHA),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
     ) {
-        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 2.dp, bottom = 10.dp)) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = model.title ?: fallbackTitle,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Column(
+                    Modifier.weight(1f).padding(start = 8.dp)
+                        .semantics(mergeDescendants = true) {}
+                ) {
+                    StatsRow(model, info.hasTrafficInfo)
+                    model.trafficFraction?.takeIf { info.hasTrafficInfo }?.let { fraction ->
+                        Spacer(Modifier.height(4.dp))
+                        LinearProgressIndicator(
+                            progress = { fraction },
+                            modifier = Modifier.fillMaxWidth().height(4.dp)
+                                .clip(RoundedCornerShape(2.dp)).clearAndSetSemantics {},
+                            color = if (model.trafficLow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                    }
+                }
                 model.supportUrl?.let { url ->
                     CardIconButton(
                         iconRes = if (SubscriptionInfoParser.isTelegramLink(url)) {
@@ -135,26 +140,27 @@ internal fun SubscriptionInfoCard(
                 )
             }
 
-            // One semantics node for the read-only figures so TalkBack reads them in one go.
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(end = 8.dp)
-                    .semantics(mergeDescendants = true) {}
-            ) {
-                StatsRow(model)
-                model.trafficFraction?.let { fraction ->
-                    Spacer(Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = { fraction },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .clearAndSetSemantics {},
-                        color = if (model.trafficLow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                    )
+            info.announcement?.let { announcement ->
+                val paragraphs = remember(announcement) {
+                    announcement.trim().split(Regex("\\r?\\n(?:[^\\S\\r\\n]*\\r?\\n)+"))
+                }
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 3.dp, bottom = 3.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    paragraphs.forEach { paragraph ->
+                        Text(
+                            text = paragraph,
+                            modifier = Modifier.fillMaxWidth(),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp,
+                                letterSpacing = 0.sp,
+                            ),
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -169,14 +175,14 @@ private fun CardIconButton(iconRes: Int, contentDescription: String, onClick: ()
 }
 
 @Composable
-private fun StatsRow(model: SubscriptionInfoUiModel) {
+private fun StatsRow(model: SubscriptionInfoUiModel, hasTrafficInfo: Boolean) {
     val totalText = if (model.totalBytes > 0L) {
         model.totalBytes.toTrafficString()
     } else {
         stringResource(R.string.sub_info_unlimited)
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(
+        if (hasTrafficInfo) Text(
             text = stringResource(R.string.sub_info_traffic, model.usedBytes.toTrafficString(), totalText),
             modifier = Modifier.weight(1f, fill = false),
             style = MaterialTheme.typography.bodySmall,
@@ -185,7 +191,7 @@ private fun StatsRow(model: SubscriptionInfoUiModel) {
             overflow = TextOverflow.Ellipsis,
         )
         model.expireMillis?.let { expireMillis ->
-            Spacer(Modifier.size(8.dp))
+            if (hasTrafficInfo) Spacer(Modifier.size(8.dp))
             Text(
                 text = Utils.formatTimestamp(expireMillis, EXPIRY_DATE_PATTERN),
                 style = MaterialTheme.typography.bodySmall,

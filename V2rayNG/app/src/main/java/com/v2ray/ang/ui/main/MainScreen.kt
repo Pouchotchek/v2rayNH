@@ -246,7 +246,6 @@ fun MainScreen(
                             },
                             onRemoveServer = removeServer,
                             usageInfo = group.usageInfo,
-                            groupTitle = group.remarks,
                             onOpenLink = { url -> onAction(MainAction.OpenSubscriptionLink(url)) },
                             contentPadding = PaddingValues(
                                 start = 0.dp,

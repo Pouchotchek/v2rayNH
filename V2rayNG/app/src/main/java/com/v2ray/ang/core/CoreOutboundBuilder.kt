@@ -31,6 +31,7 @@ object CoreOutboundBuilder {
             EConfigType.TROJAN -> toOutboundTrojan(profileItem)
             EConfigType.WIREGUARD -> toOutboundWireguard(profileItem)
             EConfigType.HYSTERIA2 -> toOutboundHysteria2(profileItem)
+            EConfigType.TUIC -> toOutboundTuic(profileItem)
             EConfigType.HTTP -> toOutboundHttp(profileItem)
             else -> null
         }
@@ -53,6 +54,7 @@ object CoreOutboundBuilder {
                 || protocol.equals(EConfigType.WIREGUARD.name, true)
                 || protocol.equals(EConfigType.HYSTERIA2.name, true)
                 || protocol.equals(EConfigType.HYSTERIA.name, true)
+                || protocol.equals(EConfigType.TUIC.name, true)
             ) {
                 muxEnabled = false
             } else if (outbound.streamSettings?.network == NetworkType.XHTTP.type) {
@@ -104,6 +106,12 @@ object CoreOutboundBuilder {
             EConfigType.HYSTERIA,
             EConfigType.HYSTERIA2 -> OutboundBean(
                 protocol = EConfigType.HYSTERIA.name.lowercase(),
+                settings = OutboundBean.OutSettingsBean(),
+                streamSettings = OutboundBean.StreamSettingsBean()
+            )
+
+            EConfigType.TUIC -> OutboundBean(
+                protocol = EConfigType.TUIC.name.lowercase(),
                 settings = OutboundBean.OutSettingsBean(),
                 streamSettings = OutboundBean.StreamSettingsBean()
             )
@@ -307,6 +315,32 @@ object CoreOutboundBuilder {
 
         outboundBean.streamSettings?.let {
             populateTlsSettings(it, profileItem, sni)
+        }
+
+        return outboundBean
+    }
+
+    private fun toOutboundTuic(profileItem: ProfileItem): OutboundBean? {
+        val outboundBean = createInitOutbound(EConfigType.TUIC) ?: return null
+        // TUIC always uses the "tuic" QUIC transport with TLS; work on a copy so the stored profile is untouched.
+        val profile = profileItem.copy(
+            network = NetworkType.TUIC.type,
+            security = AppConfig.TLS,
+            alpn = profileItem.alpn.nullIfBlank() ?: "h3",
+        )
+
+        outboundBean.settings?.let { server ->
+            server.address = getServerAddress(profile)
+            server.port = profile.serverPort.orEmpty().toInt()
+            server.version = 5
+        }
+
+        val sni = outboundBean.streamSettings?.let {
+            populateTransportSettings(it, profile)
+        }
+
+        outboundBean.streamSettings?.let {
+            populateTlsSettings(it, profile, sni)
         }
 
         return outboundBean
@@ -531,6 +565,16 @@ object CoreOutboundBuilder {
                 }
                 streamSettings.hysteriaSettings = hysteriaSetting
                 streamSettings.finalmask = finalmask
+            }
+
+            NetworkType.TUIC.type -> {
+                streamSettings.tuicSettings = OutboundBean.StreamSettingsBean.TuicSettingsBean(
+                    uuid = profileItem.username.orEmpty(),
+                    password = profileItem.password.orEmpty(),
+                    congestionControl = profileItem.congestionControl?.nullIfBlank(),
+                    udpRelayMode = profileItem.udpRelayMode?.nullIfBlank(),
+                    zeroRtt = profileItem.zeroRtt?.takeIf { it },
+                )
             }
         }
         finalMask?.let {

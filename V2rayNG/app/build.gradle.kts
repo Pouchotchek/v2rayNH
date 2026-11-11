@@ -5,16 +5,22 @@ plugins {
     id("com.jaredsburrows.license")
 }
 
+val forkRepository = providers.gradleProperty("FORK_GITHUB_REPOSITORY").orElse("").get()
+require(forkRepository.isEmpty() || forkRepository.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")))
+
 android {
     namespace = "com.v2ray.ang"
     compileSdk = 37
+    ndkVersion = "30.0.16248370"
 
     defaultConfig {
-        applicationId = "com.v2ray.ang"
+        applicationId = "com.v2raynh.android"
         minSdk = 24
         targetSdk = 37
-        versionCode = 754
-        versionName = "2.3.14"
+        versionCode = 1
+        versionName = "1.0.0"
+        buildConfigField("String", "FORK_GITHUB_REPOSITORY", "\"$forkRepository\"")
+        buildConfigField("boolean", "USES_XRAY_CORE", "true")
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
@@ -38,8 +44,19 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    val releaseKeystore = providers.environmentVariable("FORK_KEYSTORE").orNull
+    if (releaseKeystore != null) {
+        signingConfigs.create("forkRelease") {
+            storeFile = file(releaseKeystore)
+            storePassword = providers.environmentVariable("FORK_KEYSTORE_PASSWORD").get()
+            keyAlias = providers.environmentVariable("FORK_KEY_ALIAS").get()
+            keyPassword = providers.environmentVariable("FORK_KEY_PASSWORD").get()
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("forkRelease")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -82,45 +99,13 @@ android {
     applicationVariants.all {
         val variant = this
         val isFdroid = variant.productFlavors.any { it.name == "fdroid" }
-        if (isFdroid) {
-            val versionCodes =
-                mapOf(
-                    "armeabi-v7a" to 2, "arm64-v8a" to 1, "x86" to 4, "x86_64" to 3, "universal" to 0
-                )
-
-            variant.outputs
-                .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
-                .forEach { output ->
-                    val abi = output.getFilter("ABI") ?: "universal"
-                    output.outputFileName = "v2rayNG_${variant.versionName}-fdroid_${abi}.apk"
-                    if (versionCodes.containsKey(abi)) {
-                        output.versionCodeOverride =
-                            (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
-                    } else {
-                        return@forEach
-                    }
-                }
-        } else {
-            val versionCodes =
-                mapOf("armeabi-v7a" to 4, "arm64-v8a" to 4, "x86" to 4, "x86_64" to 4, "universal" to 4)
-
-            variant.outputs
-                .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
-                .forEach { output ->
-                    val abi = if (output.getFilter("ABI") != null)
-                        output.getFilter("ABI")
-                    else
-                        "universal"
-
-                    output.outputFileName = "v2rayNG_${variant.versionName}_${abi}.apk"
-                    if (versionCodes.containsKey(abi)) {
-                        output.versionCodeOverride =
-                            (1000000 * versionCodes[abi]!!).plus(variant.versionCode)
-                    } else {
-                        return@forEach
-                    }
-                }
-        }
+        val distribution = if (isFdroid) "-fdroid" else ""
+        variant.outputs
+            .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
+            .forEach { output ->
+                val abi = output.getFilter("ABI") ?: "universal"
+                output.outputFileName = "v2rayNH_${variant.versionName}${distribution}_${abi}.apk"
+            }
     }
 
     buildFeatures {
@@ -204,6 +189,7 @@ dependencies {
     // AndroidX Lifecycle and Architecture Components
     implementation(libs.lifecycle.viewmodel.ktx)
     implementation(libs.lifecycle.runtime.ktx)
+    implementation(libs.lifecycle.process)
 
     // Background Task Libraries
     implementation(libs.work.runtime.ktx)

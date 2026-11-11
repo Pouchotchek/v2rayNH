@@ -14,6 +14,7 @@ import com.v2ray.ang.dto.TestServiceMessage
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.dto.entities.ServersCache
 import com.v2ray.ang.dto.entities.SubscriptionCache
+import com.v2ray.ang.dto.entities.SubscriptionUsageInfo
 import com.v2ray.ang.extension.delay
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.matchesPattern
@@ -101,6 +102,7 @@ class MainViewModel(
     private val serverOrderPersistenceJobs = mutableMapOf<String, Job>()
 
     private var setupGroupJob: Job? = null
+    private var dueSubscriptionUpdateJob: Job? = null
     private var preloadJob: Job? = null
     private var selectedGroupLoadJob: Job? = null
     private var reloadJob: Job? = null
@@ -276,6 +278,7 @@ class MainViewModel(
     fun onAction(action: MainAction) {
         when (action) {
             MainAction.Initialize -> initialize()
+            MainAction.RefreshDueSubscriptions -> refreshDueSubscriptions()
             MainAction.RefreshGroups -> setupGroupTab(forceRefresh = true)
             MainAction.TestAllServers -> testAllRealPing(true)
             MainAction.TestRealAllServers -> testAllRealPing()
@@ -326,11 +329,24 @@ class MainViewModel(
                 initialPageReady.await()
                 delay(32)
                 dataSource.initAssets()
-                dataSource.syncSubscriptions()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 LogUtil.e(AppConfig.TAG, "Main background initialization failed", error)
+            }
+        }
+    }
+
+    private fun refreshDueSubscriptions() {
+        if (dueSubscriptionUpdateJob?.isActive == true) return
+        dueSubscriptionUpdateJob = viewModelScope.launch(ioDispatcher) {
+            try {
+                initialPageReady.await()
+                if (dataSource.updateDueSubscriptions()) setupGroupTab(forceRefresh = true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                LogUtil.e(AppConfig.TAG, "Foreground subscription update failed", error)
             }
         }
     }
@@ -458,9 +474,12 @@ class MainViewModel(
                 val groups = dataSource.getSubscriptions().map {
                     GroupMapItem(
                         id = it.guid,
-                        remarks = it.subscription.remarks,
-                        usageInfo = it.subscription.usageInfo?.let { info ->
-                            SubscriptionInfoParser.withWebPageFallback(info, it.subscription.url)
+                        remarks = it.subscription.usageInfo?.title ?: it.subscription.remarks
+                            .takeUnless { name -> name == "import sub" }
+                            ?: dataSource.getString(R.string.subscription_untitled),
+                        usageInfo = it.subscription.url.takeIf { url -> url.isNotBlank() }?.let { url ->
+                            val info = it.subscription.usageInfo ?: SubscriptionUsageInfo(hasTrafficInfo = false)
+                            SubscriptionInfoParser.withWebPageFallback(info, url)
                         },
                     )
                 }
@@ -797,9 +816,11 @@ class MainViewModel(
         }
     }
 
-    fun moveServer(groupId: String, fromPosition: Int, toPosition: Int) {
+    fun moveServer(groupId: String, fromGuid: String, toGuid: String) {
         val groupState = mutableServerGroupState(groupId).value
         val servers = groupState.servers.toMutableList()
+        val fromPosition = servers.indexOfFirst { it.guid == fromGuid }
+        val toPosition = servers.indexOfFirst { it.guid == toGuid }
         if (!servers.moveItem(fromPosition, toPosition)) return
         val rows = groupState.rows.toMutableList()
         rows.moveItem(fromPosition, toPosition)

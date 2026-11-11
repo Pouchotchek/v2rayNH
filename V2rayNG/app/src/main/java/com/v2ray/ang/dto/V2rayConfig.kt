@@ -122,6 +122,7 @@ data class V2rayConfig(
             var realitySettings: TlsSettingsBean? = null,
             var grpcSettings: GrpcSettingsBean? = null,
             var hysteriaSettings: HysteriaSettingsBean? = null,
+            var tuicSettings: TuicSettingsBean? = null,
             var finalmask: Any? = null,
             val dsSettings: Any? = null,
             var sockopt: SockoptBean? = null
@@ -251,6 +252,15 @@ data class V2rayConfig(
             data class HysteriaSettingsBean(
                 var version: Int,
                 var auth: String? = null
+            )
+
+            /** TUIC v5 transport options; consumed by the "tuic" transport of the Xray core fork. */
+            data class TuicSettingsBean(
+                var uuid: String,
+                var password: String? = null,
+                var congestionControl: String? = null,
+                var udpRelayMode: String? = null,
+                var zeroRtt: Boolean? = null
             )
 
             //https://xtls.github.io/config/transport.html#finalmaskobject

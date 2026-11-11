@@ -21,6 +21,7 @@ import java.util.Locale
 object SubscriptionInfoParser {
     private const val BASE64_PREFIX = "base64:"
     private const val MAX_TITLE_LENGTH = 100
+    private const val MAX_ANNOUNCEMENT_LENGTH = 200
     private const val MAX_URL_LENGTH = 2048
 
     /** Values at or above this are epoch milliseconds, not seconds (year 5138 in seconds). */
@@ -40,13 +41,26 @@ object SubscriptionInfoParser {
         supportUrl: String?,
         webPageUrl: String?,
         decodeBase64: (String) -> String = Utils::decode,
+        announce: String? = null,
+        subInfoText: String? = null,
+        body: String? = null,
     ): SubscriptionUsageInfo? {
         val fields = parseUserInfoFields(userInfo)
+        val metadata = body.orEmpty().lineSequence()
+            .map { it.trimStart().removePrefix("\uFEFF") }
+            .filter { it.startsWith('#') && ':' in it }
+            .associate { it.substringBefore(':').lowercase(Locale.ROOT) to it.substringAfter(':').trim() }
         val title = decodeTitle(profileTitle, decodeBase64)
+            ?: decodeTitle(metadata["#profile-title"], decodeBase64)
         val support = sanitizeLink(supportUrl)
         val webPage = sanitizeLink(webPageUrl)
 
-        if (fields == null && title == null && support == null && webPage == null) return null
+        val announcement = parseAnnouncement(
+            announce ?: metadata["#announce"],
+            subInfoText ?: metadata["#sub-info-text"],
+            decodeBase64,
+        )
+        if (fields == null && title == null && support == null && webPage == null && announcement == null) return null
 
         return SubscriptionUsageInfo(
             upload = fields?.get("upload") ?: 0,
@@ -56,7 +70,26 @@ object SubscriptionInfoParser {
             title = title,
             supportUrl = support,
             webPageUrl = webPage,
+            announcement = announcement,
+            hasTrafficInfo = fields?.keys?.any { it == "upload" || it == "download" || it == "total" } == true,
         )
+    }
+
+    private fun parseAnnouncement(
+        announce: String?,
+        subInfoText: String?,
+        decodeBase64: (String) -> String,
+    ): String? {
+        val raw = subInfoText?.takeUnless { it.isBlank() || it.trim() == "0" }
+            ?: announce ?: return null
+        val value = raw.trim()
+        val decoded = if (value.startsWith(BASE64_PREFIX, ignoreCase = true)) {
+            runCatching { decodeBase64(value.substring(BASE64_PREFIX.length).trim()) }.getOrNull()
+        } else {
+            value
+        }?.trim()?.takeUnless { it.isEmpty() || it == "0" } ?: return null
+        val length = decoded.codePointCount(0, decoded.length).coerceAtMost(MAX_ANNOUNCEMENT_LENGTH)
+        return decoded.substring(0, decoded.offsetByCodePoints(0, length))
     }
 
     /**

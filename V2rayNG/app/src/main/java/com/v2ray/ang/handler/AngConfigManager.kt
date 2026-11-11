@@ -3,6 +3,7 @@ package com.v2ray.ang.handler
 import android.content.Context
 import android.graphics.Bitmap
 import android.text.TextUtils
+import com.v2ray.ang.AngApplication
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.core.CoreConfigManager
 import com.v2ray.ang.dto.SubscriptionUpdateResult
@@ -10,11 +11,11 @@ import com.v2ray.ang.dto.UrlContentRequest
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.dto.entities.SubscriptionItem
-import com.v2ray.ang.dto.entities.SubscriptionUsageInfo
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.isNotNullEmpty
 import com.v2ray.ang.fmt.CustomFmt
 import com.v2ray.ang.fmt.Hysteria2Fmt
+import com.v2ray.ang.fmt.TuicFmt
 import com.v2ray.ang.fmt.ShadowsocksFmt
 import com.v2ray.ang.fmt.SocksFmt
 import com.v2ray.ang.fmt.TrojanFmt
@@ -28,6 +29,8 @@ import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.QRCodeDecoder
 import com.v2ray.ang.util.Utils
 import okhttp3.Headers
+import java.io.File
+import java.io.FileOutputStream
 import java.net.URI
 
 object AngConfigManager {
@@ -50,6 +53,7 @@ object AngConfigManager {
             EConfigType.WIREGUARD.protocolScheme to WireguardFmt::parse,
             EConfigType.HYSTERIA2.protocolScheme to Hysteria2Fmt::parse,
             AppConfig.HY2 to Hysteria2Fmt::parse,
+            EConfigType.TUIC.protocolScheme to TuicFmt::parse,
         )
     }
 
@@ -165,6 +169,7 @@ object AngConfigManager {
                 EConfigType.TROJAN -> TrojanFmt.toUri(config)
                 EConfigType.WIREGUARD -> WireguardFmt.toUri(config)
                 EConfigType.HYSTERIA2 -> Hysteria2Fmt.toUri(config)
+                EConfigType.TUIC -> TuicFmt.toUri(config)
                 else -> {}
             }
         } catch (e: Exception) {
@@ -460,7 +465,32 @@ object AngConfigManager {
      * @param it The subscription item.
      * @return Subscription update result.
      */
-    fun updateConfigViaSub(it: SubscriptionCache): SubscriptionUpdateResult {
+    @Synchronized
+    fun updateConfigViaSub(
+        it: SubscriptionCache,
+        onlyIfDue: Boolean = false,
+        resetSchedule: Boolean = true,
+    ): SubscriptionUpdateResult {
+        return try {
+            // The foreground screen and the periodic updater run in different processes.
+            val lockFile = File(AngApplication.application.filesDir, "subscription-update.lock")
+            FileOutputStream(lockFile, true).channel.use { channel ->
+                channel.lock().use { _ ->
+                    val current = MmkvManager.decodeSubscription(it.guid)
+                        ?: return SubscriptionUpdateResult(skipCount = 1)
+                    if (onlyIfDue && !SubscriptionUpdater.isDue(current, System.currentTimeMillis())) {
+                        return SubscriptionUpdateResult(skipCount = 1)
+                    }
+                    fetchSubscription(SubscriptionCache(it.guid, current), resetSchedule)
+                }
+            }
+        } catch (error: Exception) {
+            LogUtil.e(AppConfig.TAG, "Failed to lock subscription update for ${it.guid}", error)
+            SubscriptionUpdateResult(failureCount = 1)
+        }
+    }
+
+    private fun fetchSubscription(it: SubscriptionCache, resetSchedule: Boolean): SubscriptionUpdateResult {
         try {
             // Check if disabled
             if (!it.subscription.enabled) {
@@ -484,21 +514,14 @@ object AngConfigManager {
                     return SubscriptionUpdateResult(failureCount = 1)
                 }
             }
-            LogUtil.i(AppConfig.TAG, url)
             val userAgent = it.subscription.userAgent
             val requestHeaders = it.subscription.requestHeaders
             val proxyUsername = SettingsManager.getSocksUsername()
             val proxyPassword = SettingsManager.getSocksPassword()
 
-            // Account info (traffic, expiry, support link) the panel sends in the response headers.
-            var usageInfo: SubscriptionUsageInfo? = null
+            var responseHeaders: Headers? = null
             val captureUsageInfo: (Headers) -> Unit = { headers ->
-                usageInfo = SubscriptionInfoParser.parse(
-                    userInfo = headers["Subscription-Userinfo"],
-                    profileTitle = headers["Profile-Title"],
-                    supportUrl = headers["Support-Url"],
-                    webPageUrl = headers["Profile-Web-Page-Url"],
-                )
+                responseHeaders = headers
             }
 
             var configText = try {
@@ -538,12 +561,27 @@ object AngConfigManager {
                 return SubscriptionUpdateResult(failureCount = 1)
             }
 
-            val count = parseConfigViaSub(configText, it.guid, false)
+            val decodedConfig = Utils.decode(configText)
+            val count = parseConfigViaSub(configText, it.guid, false, decodedConfig)
             if (count > 0) {
                 it.subscription.lastUpdated = System.currentTimeMillis()
-                // Replaced on every successful update so the box disappears if the panel stops sending the headers.
-                it.subscription.usageInfo = usageInfo
+                it.subscription.usageInfo = SubscriptionInfoParser.parse(
+                    userInfo = responseHeaders?.get("Subscription-Userinfo"),
+                    profileTitle = responseHeaders?.get("Profile-Title"),
+                    supportUrl = responseHeaders?.get("Support-Url"),
+                    webPageUrl = responseHeaders?.get("Profile-Web-Page-Url"),
+                    announce = responseHeaders?.get("Announce"),
+                    subInfoText = responseHeaders?.get("Sub-Info-Text"),
+                    body = decodedConfig.ifEmpty { configText },
+                )
                 MmkvManager.encodeSubscription(it.guid, it.subscription)
+                if (resetSchedule) {
+                    try {
+                        SubscriptionUpdater.syncOne(subId = it.guid)
+                    } catch (error: Exception) {
+                        LogUtil.e(AppConfig.TAG, "Failed to reschedule subscription ${it.guid}", error)
+                    }
+                }
                 LogUtil.i(AppConfig.TAG, "Subscription updated: ${it.subscription.remarks}, $count configs")
                 return SubscriptionUpdateResult(
                     configCount = count,
@@ -602,8 +640,13 @@ object AngConfigManager {
      * @param append Whether to append the configurations.
      * @return The number of configurations parsed.
      */
-    private fun parseConfigViaSub(server: String?, subid: String, append: Boolean): Int {
-        var count = parseBatchConfig(Utils.decode(server), subid, append)
+    private fun parseConfigViaSub(
+        server: String?,
+        subid: String,
+        append: Boolean,
+        decoded: String,
+    ): Int {
+        var count = parseBatchConfig(decoded, subid, append)
         if (count <= 0) {
             count = parseBatchConfig(server, subid, append)
         }

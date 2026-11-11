@@ -15,6 +15,9 @@ import kotlinx.coroutines.withContext
 
 object UpdateCheckerManager {
     suspend fun checkForUpdate(includePreRelease: Boolean = false): CheckUpdateResult = withContext(Dispatchers.IO) {
+        if (BuildConfig.FORK_GITHUB_REPOSITORY.isEmpty()) {
+            return@withContext CheckUpdateResult(hasUpdate = false)
+        }
         val url = if (includePreRelease) {
             AppConfig.APP_API_URL
         } else {
@@ -62,7 +65,9 @@ object UpdateCheckerManager {
         )
 
         return@withContext if (compareVersions(latestVersion, BuildConfig.VERSION_NAME) > 0) {
-            val downloadUrl = getDownloadUrl(latestRelease, Build.SUPPORTED_ABIS[0])
+            val downloadUrl = selectReleaseApk(
+                latestRelease, Build.SUPPORTED_ABIS.toList(), BuildConfig.APPLICATION_ID.endsWith(".fdroid"),
+            ) ?: return@withContext CheckUpdateResult(hasUpdate = false)
             CheckUpdateResult(
                 hasUpdate = true,
                 latestVersion = latestVersion,
@@ -87,20 +92,12 @@ object UpdateCheckerManager {
         return 0
     }
 
-    private fun getDownloadUrl(release: GitHubRelease, abi: String): String {
-        val fDroid = "fdroid"
-
-        val assetsByAbi = release.assets.filter {
-            (it.name.contains(abi, true))
+    internal fun selectReleaseApk(release: GitHubRelease, abis: List<String>, fdroid: Boolean): String? {
+        val distribution = if (fdroid) "-fdroid" else ""
+        val stem = "v2rayNH_${release.tagName.removePrefix("v")}${distribution}_"
+        val assets = release.assets.associateBy { it.name }
+        return (abis + "universal").firstNotNullOfOrNull { abi ->
+            assets["$stem$abi.apk"]?.browserDownloadUrl
         }
-
-        val asset = if (BuildConfig.APPLICATION_ID.contains(fDroid, ignoreCase = true)) {
-            assetsByAbi.firstOrNull { it.name.contains(fDroid) }
-        } else {
-            assetsByAbi.firstOrNull { !it.name.contains(fDroid) }
-        }
-
-        return asset?.browserDownloadUrl
-            ?: throw IllegalStateException("No compatible APK found")
     }
 }

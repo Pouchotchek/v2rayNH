@@ -9,18 +9,18 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -34,15 +34,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
@@ -50,6 +48,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -85,7 +84,6 @@ fun GroupPagerPage(
     onMoreServer: (String, ProfileItem) -> Unit,
     onRemoveServer: (String, String) -> Unit,
     usageInfo: SubscriptionUsageInfo?,
-    groupTitle: String,
     onOpenLink: (String) -> Unit,
     contentPadding: PaddingValues
 ) {
@@ -109,50 +107,30 @@ fun GroupPagerPage(
             remove = onRemoveServer,
         )
     }
-    // The box floats over the list (the list scrolls underneath it), so the list is padded by the box height.
-    val density = LocalDensity.current
-    val layoutDirection = LocalLayoutDirection.current
-    var infoHeightPx by remember { mutableIntStateOf(0) }
-    val listPadding = if (usageInfo == null) {
-        contentPadding
-    } else {
-        PaddingValues(
-            start = contentPadding.calculateStartPadding(layoutDirection),
-            top = contentPadding.calculateTopPadding() + with(density) { infoHeightPx.toDp() },
-            end = contentPadding.calculateEndPadding(layoutDirection),
-            bottom = contentPadding.calculateBottomPadding()
-        )
-    }
-
-    Box(Modifier.fillMaxSize()) {
-        ServerListPage(
-            rows = groupState.rows,
-            selectedGuid = selectedGuid,
-            locateTarget = locateTarget?.takeIf { it.groupId == groupId },
-            canReorder = canReorder,
-            doubleColumnDisplay = doubleColumnDisplay,
-            groupId = groupId,
-            lazyListStates = lazyListStates,
-            lazyGridStates = lazyGridStates,
-            actions = actions,
-            onLocateHandled = { mainViewModel.onAction(MainAction.LocateHandled) },
-            onMoveServer = { fromIndex, toIndex ->
-                mainViewModel.moveServer(groupId, fromIndex, toIndex)
-            },
-            contentPadding = listPadding
-        )
-        if (usageInfo != null) {
+    val header: (@Composable () -> Unit)? = usageInfo?.let { info ->
+        {
             SubscriptionInfoCard(
-                info = usageInfo,
-                fallbackTitle = groupTitle,
+                info = info,
                 onOpenLink = onOpenLink,
                 onRefresh = { mainViewModel.onAction(MainAction.UpdateGroupSubscription(groupId)) },
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .onSizeChanged { infoHeightPx = it.height }
             )
         }
     }
+    ServerListPage(
+        rows = groupState.rows,
+        selectedGuid = selectedGuid,
+        locateTarget = locateTarget?.takeIf { it.groupId == groupId },
+        canReorder = canReorder,
+        doubleColumnDisplay = doubleColumnDisplay,
+        groupId = groupId,
+        lazyListStates = lazyListStates,
+        lazyGridStates = lazyGridStates,
+        actions = actions,
+        onLocateHandled = { mainViewModel.onAction(MainAction.LocateHandled) },
+        onMoveServer = { fromGuid, toGuid -> mainViewModel.moveServer(groupId, fromGuid, toGuid) },
+        contentPadding = contentPadding,
+        header = header,
+    )
 }
 
 private class ServerRowActions(
@@ -175,20 +153,25 @@ private fun ServerListPage(
     lazyGridStates: MutableMap<String, LazyGridState>,
     actions: ServerRowActions,
     onLocateHandled: () -> Unit,
-    onMoveServer: (Int, Int) -> Unit,
-    contentPadding: PaddingValues
+    onMoveServer: (String, String) -> Unit,
+    contentPadding: PaddingValues,
+    header: (@Composable () -> Unit)?,
 ) {
+    val headerKey = "subscription-header:$groupId"
+    val headerCount = if (header == null) 0 else 1
     if (doubleColumnDisplay) {
         val gridState = remember(groupId) {
             lazyGridStates.getOrPut(groupId) { LazyGridState() }
         }
         val reorderableGridState = if (canReorder) {
             rememberReorderableLazyGridState(gridState) { from, to ->
-                onMoveServer(from.index, to.index)
+                val fromGuid = from.key as? String
+                val toGuid = to.key as? String
+                if (fromGuid != null && toGuid != null) onMoveServer(fromGuid, toGuid)
             }
         } else null
 
-        LocateTargetEffect(locateTarget, rows, gridState, onLocateHandled)
+        LocateTargetEffect(locateTarget, rows, headerCount, gridState, onLocateHandled)
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
@@ -198,12 +181,14 @@ private fun ServerListPage(
                 .verticalScrollbar(gridState),
             contentPadding = contentPadding
         ) {
+            if (header != null) item(key = headerKey, span = { GridItemSpan(maxLineSpan) }) { header() }
             itemsIndexed(items = rows, key = { _, item -> item.guid }) { _, row ->
                 val content: @Composable () -> Unit = {
                     ServerItemColumn(
                         row = row,
                         isSelected = row.guid == selectedGuid,
                         doubleColumnDisplay = true,
+                        compact = header != null,
                         actions = actions
                     )
                 }
@@ -228,11 +213,13 @@ private fun ServerListPage(
         }
         val reorderableState = if (canReorder) {
             rememberReorderableLazyListState(listState) { from, to ->
-                onMoveServer(from.index, to.index)
+                val fromGuid = from.key as? String
+                val toGuid = to.key as? String
+                if (fromGuid != null && toGuid != null) onMoveServer(fromGuid, toGuid)
             }
         } else null
 
-        LocateTargetEffect(locateTarget, rows, listState, onLocateHandled)
+        LocateTargetEffect(locateTarget, rows, headerCount, listState, onLocateHandled)
 
         LazyColumn(
             state = listState,
@@ -241,6 +228,7 @@ private fun ServerListPage(
                 .verticalScrollbar(listState),
             contentPadding = contentPadding
         ) {
+            if (header != null) item(key = headerKey) { header() }
             itemsIndexed(items = rows, key = { _, item -> item.guid }) { _, row ->
                 if (canReorder && reorderableState != null) {
                     ReorderableItem(
@@ -254,6 +242,7 @@ private fun ServerListPage(
                             ServerItemRow(
                                 row = row,
                                 isSelected = row.guid == selectedGuid,
+                                compact = header != null,
                                 actions = actions
                             )
                         }
@@ -263,6 +252,7 @@ private fun ServerListPage(
                     ServerItemRow(
                         row = row,
                         isSelected = row.guid == selectedGuid,
+                        compact = header != null,
                         actions = actions
                     )
                     ItemDivider()
@@ -276,14 +266,15 @@ private fun ServerListPage(
 private fun LocateTargetEffect(
     target: LocateTarget?,
     rows: List<ServerRowUiModel>,
+    headerCount: Int,
     state: LazyListState,
     onHandled: () -> Unit,
 ) {
     if (target == null) return
-    LaunchedEffect(target, rows) {
+    LaunchedEffect(target, rows, headerCount) {
         val index = rows.indexOfFirst { it.guid == target.serverGuid }
         if (index < 0) return@LaunchedEffect
-        state.scrollToItem(index, -state.layoutInfo.viewportSize.height / 3)
+        state.scrollToItem(index + headerCount, -state.layoutInfo.viewportSize.height / 3)
         onHandled()
     }
 }
@@ -292,14 +283,15 @@ private fun LocateTargetEffect(
 private fun LocateTargetEffect(
     target: LocateTarget?,
     rows: List<ServerRowUiModel>,
+    headerCount: Int,
     state: LazyGridState,
     onHandled: () -> Unit,
 ) {
     if (target == null) return
-    LaunchedEffect(target, rows) {
+    LaunchedEffect(target, rows, headerCount) {
         val index = rows.indexOfFirst { it.guid == target.serverGuid }
         if (index < 0) return@LaunchedEffect
-        state.scrollToItem(index, -state.layoutInfo.viewportSize.height / 3)
+        state.scrollToItem(index + headerCount, -state.layoutInfo.viewportSize.height / 3)
         onHandled()
     }
 }
@@ -308,12 +300,14 @@ private fun LocateTargetEffect(
 private fun ServerItemRow(
     row: ServerRowUiModel,
     isSelected: Boolean,
+    compact: Boolean,
     actions: ServerRowActions
 ) {
     ServerListItem(
         row = row,
         isSelected = isSelected,
         doubleColumnDisplay = false,
+        compact = compact,
         actions = actions
     )
 }
@@ -323,6 +317,7 @@ private fun ServerItemColumn(
     row: ServerRowUiModel,
     isSelected: Boolean,
     doubleColumnDisplay: Boolean,
+    compact: Boolean,
     actions: ServerRowActions
 ) {
     Column {
@@ -330,6 +325,7 @@ private fun ServerItemColumn(
             row = row,
             isSelected = isSelected,
             doubleColumnDisplay = doubleColumnDisplay,
+            compact = compact,
             actions = actions
         )
         ItemDivider()
@@ -341,6 +337,7 @@ private fun ServerListItem(
     row: ServerRowUiModel,
     isSelected: Boolean,
     doubleColumnDisplay: Boolean,
+    compact: Boolean,
     actions: ServerRowActions
 ) {
     val testResult = if (row.testDelayMillis == 0L) {
@@ -352,6 +349,10 @@ private fun ServerListItem(
         stringResource(R.string.acc_selected_server)
     } else {
         null
+    }
+    if (compact) {
+        CompactServerListItem(row, isSelected, selectedStateDescription, testResult, doubleColumnDisplay, actions)
+        return
     }
     Row(
         modifier = Modifier
@@ -464,6 +465,84 @@ private fun ServerListItem(
             }
         }
     }
+}
+
+@Composable
+private fun CompactServerListItem(
+    row: ServerRowUiModel,
+    isSelected: Boolean,
+    selectedStateDescription: String?,
+    testResult: String,
+    doubleColumnDisplay: Boolean,
+    actions: ServerRowActions,
+) {
+    val (flag, title) = remember(row.remarks) { splitServerFlag(row.remarks) }
+    val accent = MaterialTheme.colorScheme.primary
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .drawBehind {
+                if (isSelected) {
+                    drawRect(accent.copy(alpha = 0.08f))
+                    val indicatorWidth = 3.dp.toPx()
+                    val inset = 7.dp.toPx()
+                    val start = if (layoutDirection == LayoutDirection.Ltr) 0f else size.width - indicatorWidth
+                    drawRect(accent, Offset(start, inset), Size(indicatorWidth, size.height - inset * 2))
+                }
+            }
+            .semantics {
+                if (selectedStateDescription != null) stateDescription = selectedStateDescription
+            }
+            .clickable { actions.select(row.guid) }
+            .padding(start = 14.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (flag.isNotEmpty()) {
+            Text(flag, fontSize = 20.sp)
+        }
+        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = if (doubleColumnDisplay) 2 else 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = row.typeDescription,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (!doubleColumnDisplay && testResult.isNotEmpty()) {
+            CompactServerDelay(testResult, row.testDelayMillis < 0)
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            IconButton(onClick = { actions.more(row.guid, row.profile) }) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_chevron_right_24dp),
+                    contentDescription = stringResource(R.string.acc_more),
+                )
+            }
+            if (doubleColumnDisplay && testResult.isNotEmpty()) {
+                CompactServerDelay(testResult, row.testDelayMillis < 0)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactServerDelay(result: String, failed: Boolean) {
+    Text(
+        text = result,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (failed) colorPingRed else colorPing,
+        maxLines = 1,
+    )
 }
 
 internal suspend fun PagerState.navigateToPageOptimized(

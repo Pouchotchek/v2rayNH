@@ -66,6 +66,10 @@ data class ProfileItem(
     var bandwidthDown: String? = null,
     var bandwidthUp: String? = null,
 
+    var congestionControl: String? = null,
+    var udpRelayMode: String? = null,
+    var zeroRtt: Boolean? = null,
+
     var policyGroupType: String? = null,
     var policyGroupSubscriptionId: String? = null,
     var policyGroupFilter: String? = null,

@@ -25,6 +25,46 @@ class SubscriptionInfoParserTest {
     }
 
     @Test
+    fun parsesAnnouncementOnlyWithoutInventingTraffic() {
+        val encoded = Base64.getEncoder().encodeToString("Первая строка\nВторая строка".toByteArray())
+        val result = SubscriptionInfoParser.parse(null, null, null, null, decode, announce = "base64:$encoded")!!
+        assertEquals("Первая строка\nВторая строка", result.announcement)
+        assertFalse(result.hasTrafficInfo)
+    }
+
+    @Test
+    fun readsBodyMetadataAndPrefersServerHeaders() {
+        val body = "#announce: Body announcement\n#sub-info-text: Body banner\nvless://profile"
+        assertEquals("Body banner", SubscriptionInfoParser.parse(null, null, null, null, decode, body = body)?.announcement)
+        val result = SubscriptionInfoParser.parse(
+            null, null, null, null, decode, announce = "Header announcement", subInfoText = "0", body = body,
+        )
+        assertEquals("Header announcement", result?.announcement)
+    }
+
+    @Test
+    fun readsProfileTitleFromBodyWhenTheHeaderIsMissing() {
+        val body = "#profile-title: Test subscription\nvless://profile"
+        assertEquals(
+            "Test subscription",
+            SubscriptionInfoParser.parse(null, null, null, null, decode, body = body)?.title,
+        )
+        assertEquals(
+            "Header title",
+            SubscriptionInfoParser.parse(null, "Header title", null, null, decode, body = body)?.title,
+        )
+    }
+
+    @Test
+    fun ignoresInvalidAnnouncementAndTrimsByCodePoint() {
+        val invalid = SubscriptionInfoParser.parse(null, null, null, null, decode, announce = "base64:!!!")
+        assertNull(invalid)
+        val longText = "a".repeat(199) + "🚀⚡"
+        val result = SubscriptionInfoParser.parse(null, null, null, null, decode, announce = longText)
+        assertEquals("a".repeat(199) + "🚀", result?.announcement)
+    }
+
+    @Test
     fun parsesStandardUserInfo() {
         val info = parse(userInfo = "upload=100; download=200; total=1000; expire=1893456000")!!
         assertEquals(100, info.upload)

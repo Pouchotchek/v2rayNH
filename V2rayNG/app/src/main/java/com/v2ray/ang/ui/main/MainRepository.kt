@@ -195,6 +195,19 @@ class MainRepository(
     override fun updateConfigViaSubAll(): SubscriptionUpdateResult =
         AngConfigManager.updateConfigViaSubAll()
 
+    override fun updateDueSubscriptions(): Boolean {
+        SubscriptionUpdater.sync(app)
+        val now = System.currentTimeMillis()
+        var updated = false
+        for (subscription in MmkvManager.decodeSubscriptions()) {
+            if (!SubscriptionUpdater.isDue(subscription.subscription, now)) continue
+            if (AngConfigManager.updateConfigViaSub(subscription, onlyIfDue = true).successCount > 0) {
+                updated = true
+            }
+        }
+        return updated
+    }
+
     override fun updateConfigViaSub(subscriptionCache: SubscriptionCache): SubscriptionUpdateResult =
         AngConfigManager.updateConfigViaSub(subscriptionCache)
 
@@ -223,10 +236,6 @@ class MainRepository(
         MessageHelper.sendMsg2ServiceForResult(app, AppConfig.MSG_MEASURE_DELAY, requestId) { handled ->
             if (!handled) mainServiceEventChannel.trySend(MainServiceEvent.MeasureDelayCancelled(requestId))
         }
-    }
-
-    override fun syncSubscriptions() {
-        SubscriptionUpdater.sync(app)
     }
 
     override fun initAssets() {
