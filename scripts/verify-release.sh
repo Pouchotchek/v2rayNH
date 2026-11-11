@@ -14,8 +14,8 @@ for distribution in '' '-fdroid'; do
     for abi in "${abis[@]}" universal; do
         apk="v2rayNH_${version}${distribution}_${abi}.apk"
         signing_info="$("$build_tools/apksigner" verify --print-certs "$apk")"
-        digest="$(awk -F ': ' '/certificate SHA-256 digest/ { print $2 }' <<< "$signing_info")"
-        [[ -n "$digest" ]]
+        digest="$(awk '/certificate SHA-256 digest:/ { print $NF }' <<< "$signing_info")"
+        [[ "$digest" =~ ^[[:xdigit:]]{64}$ ]]
         [[ -z "$certificate" || "$certificate" = "$digest" ]]
         certificate="$digest"
 
