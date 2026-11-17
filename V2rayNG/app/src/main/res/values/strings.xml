@@ -573,4 +573,6 @@
     <string name="sub_info_expires">Expires: %1$s</string>
     <string name="sub_info_show_description">Show subscription description</string>
     <string name="sub_info_hide_description">Hide subscription description</string>
+    <string name="routing_use_profile_rules">Use routing rules from the profile</string>
+    <string name="routing_use_profile_rules_summary">Custom JSON profiles only. Reconnect to apply changes.</string>
 </resources>

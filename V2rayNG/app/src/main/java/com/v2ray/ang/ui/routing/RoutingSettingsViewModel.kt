@@ -1,14 +1,19 @@
 package com.v2ray.ang.ui.routing
 
 import android.app.Application
+import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.entities.RulesetItem
 import com.v2ray.ang.extension.moveItem
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.ui.base.BaseViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class RoutingSettingsViewModel(application: Application) : BaseViewModel(application) {
@@ -16,6 +21,26 @@ class RoutingSettingsViewModel(application: Application) : BaseViewModel(applica
 
     private val _rulesetsFlow = MutableStateFlow<List<RulesetItem>>(emptyList())
     val rulesetsFlow: StateFlow<List<RulesetItem>> = _rulesetsFlow.asStateFlow()
+
+    private val _useProfileRouting = MutableStateFlow(false)
+    val useProfileRouting = _useProfileRouting.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            _useProfileRouting.value = withContext(Dispatchers.IO) {
+                MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_CUSTOM_PROFILE_ROUTING, false)
+            }
+        }
+    }
+
+    fun setUseProfileRouting(enabled: Boolean) {
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                MmkvManager.encodeSettings(AppConfig.PREF_USE_CUSTOM_PROFILE_ROUTING, enabled)
+            }
+            if (saved) _useProfileRouting.value = enabled
+        }
+    }
 
     fun getAll(): List<RulesetItem> = rulesets.toList()
 

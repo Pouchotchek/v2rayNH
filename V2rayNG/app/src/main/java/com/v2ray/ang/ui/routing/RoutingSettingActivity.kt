@@ -58,6 +58,7 @@ import com.v2ray.ang.ui.compose.NavigationBarsBottomPadding
 import com.v2ray.ang.ui.compose.ReorderableListItem
 import com.v2ray.ang.ui.compose.SelectListDialog
 import com.v2ray.ang.ui.compose.SettingsListItem
+import com.v2ray.ang.ui.compose.SettingsSwitchItem
 import com.v2ray.ang.ui.compose.colorConfigType
 import com.v2ray.ang.ui.compose.verticalScrollbar
 import com.v2ray.ang.util.JsonUtil
@@ -202,6 +203,7 @@ fun RoutingSettingScreen(
     onExportClipboard: () -> Unit
 ) {
     val rulesets by viewModel.rulesetsFlow.collectAsStateWithLifecycle()
+    val useProfileRouting by viewModel.useProfileRouting.collectAsStateWithLifecycle()
     val domainStrategy by domainStrategyState.collectAsState()
     var showMenu by remember { mutableStateOf(false) }
     var showPresetDialog by remember { mutableStateOf(false) }
@@ -263,6 +265,14 @@ fun RoutingSettingScreen(
                 .verticalScrollbar(lazyListState),
             contentPadding = NavigationBarsBottomPadding()
         ) {
+            item(key = "custom_profile_routing") {
+                SettingsSwitchItem(
+                    title = stringResource(R.string.routing_use_profile_rules),
+                    summary = stringResource(R.string.routing_use_profile_rules_summary),
+                    checked = useProfileRouting,
+                    onCheckedChange = viewModel::setUseProfileRouting,
+                )
+            }
             item(key = "domain_strategy") {
                 SettingsListItem(
                     title = stringResource(R.string.routing_settings_domain_strategy),

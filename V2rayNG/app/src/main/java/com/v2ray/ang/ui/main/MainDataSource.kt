@@ -28,6 +28,8 @@ interface MainDataSource : Closeable {
     fun getSubscriptions(): List<SubscriptionCache>
     fun getSubscriptionItem(id: String): SubscriptionItem?
 
+    fun getCustomProtocol(guid: String): String?
+    fun saveServerDelay(guid: String, delayMillis: Long)
     fun getServerGuidList(groupId: String): List<String>
     fun isSubscriptionDescriptionExpanded(groupId: String): Boolean
     fun setSubscriptionDescriptionExpanded(groupId: String, expanded: Boolean): Boolean

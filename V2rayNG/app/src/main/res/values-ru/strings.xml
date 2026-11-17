@@ -576,4 +576,6 @@
     <string name="sub_info_expires">Истекает: %1$s</string>
     <string name="sub_info_show_description">Показать описание подписки</string>
     <string name="sub_info_hide_description">Скрыть описание подписки</string>
+    <string name="routing_use_profile_rules">Использовать маршрутизацию из профиля</string>
+    <string name="routing_use_profile_rules_summary">Только для кастомных JSON-профилей. Для применения переподключитесь.</string>
 </resources>

@@ -40,7 +40,7 @@ object CoreConfigManager {
                     errorMessage = "Failed to build config context"
                 )
             if (configContext.isCustom) {
-                return buildV2rayCustomConfig(configContext)
+                return buildV2rayCustomConfig(configContext, applyAppRouting = true)
             }
             return toConfigResult(configContext, buildUnifiedConfig(configContext))
         } catch (e: Exception) {
@@ -67,7 +67,7 @@ object CoreConfigManager {
                     errorMessage = "Failed to build config context"
                 )
             if (configContext.isCustom) {
-                return buildV2rayCustomConfig(configContext)
+                return buildV2rayCustomConfig(configContext, applyAppRouting = false)
             }
             val v2rayConfig = buildUnifiedConfig(configContext)
             postProcessForSpeedtest(v2rayConfig)
@@ -86,7 +86,7 @@ object CoreConfigManager {
     /**
      * Build configuration for custom profiles.
      */
-    private fun buildV2rayCustomConfig(configContext: CoreConfigContext): ConfigResult {
+    private fun buildV2rayCustomConfig(configContext: CoreConfigContext, applyAppRouting: Boolean): ConfigResult {
         val context = configContext.context
         val raw = MmkvManager.decodeServerRaw(configContext.guid)
             ?: return ConfigResult(
@@ -122,12 +122,9 @@ object CoreConfigManager {
             }
         }
 
-        if (!needTun()) {
-            return JsonUtil.toJsonPretty(json)?.let { ConfigResult(true, configContext.guid, it) } ?: result
-        }
-
+        val useTun = needTun()
         // Check whether package names need to be replaced with UIDs
-        if (SettingsManager.canUseProcessRouting()) {
+        if (useTun && SettingsManager.canUseProcessRouting()) {
             val rulesJson = json.get("routing")?.takeIf { it.isJsonObject }?.asJsonObject
                 ?.get("rules")?.takeIf { it.isJsonArray }?.asJsonArray
                 ?: JsonArray()
@@ -142,6 +139,21 @@ object CoreConfigManager {
 
                 rule.add("process", JsonArray().apply { uids.forEach { add(it) } })
             }
+        }
+
+        val useProfileRouting = MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_CUSTOM_PROFILE_ROUTING, false)
+        if (applyAppRouting && !(useProfileRouting && hasCustomRoutingRules(json))) {
+            val rules = MmkvManager.decodeRoutingRulesets().orEmpty().mapNotNull { item ->
+                buildRoutingUserRule(context, item)?.takeUnless { rule ->
+                    !item.process.isNullOrEmpty() && rule.process.isNullOrEmpty()
+                }
+            }
+            applyCustomProfileRouting(
+                json, rules, MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY) ?: "AsIs"
+            )
+        }
+        if (!useTun) {
+            return JsonUtil.toJsonPretty(json)?.let { ConfigResult(true, configContext.guid, it) } ?: result
         }
 
         // check if tun inbound exists
@@ -1127,6 +1139,59 @@ object CoreConfigManager {
     //endregion
 
 
+    internal fun hasCustomRoutingRules(config: JsonObject): Boolean =
+        config.get("routing")?.takeIf { it.isJsonObject }?.asJsonObject
+            ?.get("rules")?.takeIf { it.isJsonArray }?.asJsonArray
+            ?.any { it.isJsonObject } == true
+
+    internal fun applyCustomProfileRouting(
+        config: JsonObject,
+        appRules: List<V2rayConfig.RoutingBean.RulesBean>,
+        domainStrategy: String?,
+    ) {
+        val outbounds = config.get("outbounds")?.takeIf { it.isJsonArray }?.asJsonArray ?: return
+        val outboundObjects = outbounds.mapNotNull { it.takeIf { entry -> entry.isJsonObject }?.asJsonObject }
+        if (outboundObjects.isEmpty()) return
+        val existingRouting = config.get("routing")?.takeUnless { it.isJsonNull }
+        if (existingRouting != null && !existingRouting.isJsonObject) return
+        val routing = existingRouting?.asJsonObject ?: JsonObject()
+        val tags = outboundObjects.mapNotNull { it.stringProperty("tag") }.filter { it.isNotBlank() }.toMutableSet()
+        val builtinProtocols = mapOf(AppConfig.TAG_DIRECT to "freedom", AppConfig.TAG_BLOCKED to "blackhole")
+        val rules = JsonArray()
+
+        for (rule in appRules) {
+            val requestedTag = rule.outboundTag?.takeIf { it.isNotBlank() } ?: continue
+            val target = when {
+                requestedTag in tags -> requestedTag
+                requestedTag == AppConfig.TAG_PROXY ->
+                    outboundObjects.first().stringProperty("tag")?.takeIf { it.isNotBlank() } ?: continue
+                requestedTag in builtinProtocols -> {
+                    val protocol = builtinProtocols.getValue(requestedTag)
+                    val existingTag = outboundObjects.firstNotNullOfOrNull { outbound ->
+                        outbound.stringProperty("tag")?.takeIf {
+                            it.isNotBlank() && outbound.stringProperty("protocol") == protocol
+                        }
+                    }
+                    existingTag ?: requestedTag.also { tag ->
+                        outbounds.add(JsonObject().apply {
+                            addProperty("tag", tag)
+                            addProperty("protocol", protocol)
+                        })
+                        tags.add(tag)
+                    }
+                }
+                else -> continue
+            }
+            rules.add(JsonUtil.parseString(JsonUtil.toJson(rule.copy(outboundTag = target))))
+        }
+        routing.add("rules", rules)
+        if (domainStrategy != null) routing.addProperty("domainStrategy", domainStrategy)
+        config.add("routing", routing)
+    }
+
+    private fun JsonObject.stringProperty(name: String): String? =
+        get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+
     //region routing related functions
 
 
@@ -1189,12 +1254,27 @@ object CoreConfigManager {
         v2rayConfig: V2rayConfig,
         policyGroupBalancerTags: Map<String, String>
     ) {
-        val context = configContext.context
-        if (item == null || !item.enabled) {
-            return
-        }
+        val rule = buildRoutingUserRule(configContext.context, item) ?: return
+        val outboundTag = rule.outboundTag
 
-        val rule = JsonUtil.fromJson(JsonUtil.toJson(item), V2rayConfig.RoutingBean.RulesBean::class.java) ?: return
+        policyGroupBalancerTags[outboundTag]?.let { balancerTag ->
+            rule.outboundTag = null
+            rule.balancerTag = balancerTag
+        }
+        if (!outboundTag.isNullOrBlank()
+            && outboundTag !in policyGroupBalancerTags
+            && outboundTag !in AppConfig.BUILTIN_OUTBOUND_TAGS
+            && v2rayConfig.outbounds.none { it.tag == outboundTag }
+        ) {
+            LogUtil.w(AppConfig.TAG, "Outbound tag '$outboundTag' not found, falling back to '${AppConfig.TAG_PROXY}'")
+            rule.outboundTag = AppConfig.TAG_PROXY
+        }
+        v2rayConfig.routing.rules.add(rule)
+    }
+
+    private fun buildRoutingUserRule(context: Context, item: RulesetItem?): V2rayConfig.RoutingBean.RulesBean? {
+        if (item == null || !item.enabled) return null
+        val rule = JsonUtil.fromJson(JsonUtil.toJson(item), V2rayConfig.RoutingBean.RulesBean::class.java) ?: return null
 
         // Replace specific geoip rules with ext versions
         rule.ip?.let { ipList ->
@@ -1221,25 +1301,7 @@ object CoreConfigManager {
             rule.process = null
         }
 
-        val outboundTag = rule.outboundTag
-
-        // Route rules targeting a custom policy-group tag should hit its balancer.
-        policyGroupBalancerTags[outboundTag]?.let { balancerTag ->
-            rule.outboundTag = null
-            rule.balancerTag = balancerTag
-        }
-
-        // If the outbound tag is a custom one that failed to inject, fall back to proxy
-        if (!outboundTag.isNullOrBlank()
-            && outboundTag !in policyGroupBalancerTags
-            && outboundTag !in AppConfig.BUILTIN_OUTBOUND_TAGS
-            && v2rayConfig.outbounds.none { it.tag == outboundTag }
-        ) {
-            LogUtil.w(AppConfig.TAG, "Outbound tag '$outboundTag' not found, falling back to '${AppConfig.TAG_PROXY}'")
-            rule.outboundTag = AppConfig.TAG_PROXY
-        }
-
-        v2rayConfig.routing.rules.add(rule)
+        return rule
     }
 
 

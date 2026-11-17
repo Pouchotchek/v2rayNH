@@ -573,4 +573,6 @@
     <string name="sub_info_expires">Bitir: %1$s</string>
     <string name="sub_info_show_description">Abunə təsvirini göstər</string>
     <string name="sub_info_hide_description">Abunə təsvirini gizlət</string>
+    <string name="routing_use_profile_rules">Profildəki marşrutlaşdırma qaydalarından istifadə et</string>
+    <string name="routing_use_profile_rules_summary">Yalnız fərdi JSON profilləri üçün. Dəyişiklikləri tətbiq etmək üçün yenidən qoşulun.</string>
 </resources>

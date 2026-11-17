@@ -17,8 +17,8 @@ android {
         applicationId = "com.v2raynh.android"
         minSdk = 24
         targetSdk = 37
-        versionCode = 6
-        versionName = "1.0.1"
+        versionCode = 8
+        versionName = "1.1.0"
         buildConfigField("String", "FORK_GITHUB_REPOSITORY", "\"$forkRepository\"")
         buildConfigField("boolean", "USES_XRAY_CORE", "true")
 

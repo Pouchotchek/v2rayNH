@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.ConnectionTestResult
+import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.dto.GroupMapItem
 import com.v2ray.ang.dto.LocateTarget
 import com.v2ray.ang.dto.RealPingResult
@@ -157,8 +158,12 @@ class MainViewModel(
             MainServiceEvent.StateStopSuccess -> updateRunningState(false)
             is MainServiceEvent.MeasureDelayResult -> {
                 if (!uiState.value.isRunning || !testRequests.completeCurrent(event.requestId)) return
+                val automatic = automaticLatencyId == event.requestId
                 automaticLatencyId = null
                 _uiState.update { it.copy(isTesting = testRequests.isTesting, status = MainStatus.ConnectionTest(event.result)) }
+                if (automatic) event.result.profileGuid?.let { guid ->
+                    updateActiveProfileDelay(guid, event.result.delayMillis)
+                }
             }
 
             is MainServiceEvent.MeasureConfigSuccess -> {
@@ -213,6 +218,26 @@ class MainViewModel(
                     cancelPendingTestResults()
                     clearBulkLatencyIndicators()
                     resetTestStatus()
+                }
+            }
+        }
+    }
+
+    private fun updateActiveProfileDelay(guid: String, delayMillis: Long) {
+        val updates = mapOf(guid to delayMillis)
+        viewModelScope.launch {
+            withContext(ioDispatcher) {
+                if (dataSource.decodeServerConfig(guid) != null) dataSource.saveServerDelay(guid, delayMillis)
+            }
+            cacheMutex.withLock {
+                groupDataCache.replaceAll { _, servers -> applyTestDelayResults(servers, updates) }
+            }
+            groupUiFlows.values.forEach { state ->
+                state.update { current ->
+                    current.copy(
+                        servers = applyTestDelayResults(current.servers, updates),
+                        rows = applyTestDelayResultsToRows(current.rows, updates),
+                    )
                 }
             }
         }
@@ -426,7 +451,8 @@ class MainViewModel(
             ServersCache(
                 guid = guid,
                 profile = profile.copy(),
-                testDelayMillis = affiliation?.testDelayMillis ?: 0L
+                testDelayMillis = affiliation?.testDelayMillis ?: 0L,
+                customProtocol = if (profile.configType == EConfigType.CUSTOM) dataSource.getCustomProtocol(guid) else null
             )
         }
 

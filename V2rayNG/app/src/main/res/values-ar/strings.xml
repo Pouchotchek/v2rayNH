@@ -580,4 +580,6 @@
     <string name="sub_info_expires">ينتهي: %1$s</string>
     <string name="sub_info_show_description">إظهار وصف الاشتراك</string>
     <string name="sub_info_hide_description">إخفاء وصف الاشتراك</string>
+    <string name="routing_use_profile_rules">استخدام قواعد التوجيه من الملف الشخصي</string>
+    <string name="routing_use_profile_rules_summary">لملفات JSON المخصصة فقط. أعد الاتصال لتطبيق التغييرات.</string>
 </resources>

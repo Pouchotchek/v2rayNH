@@ -570,4 +570,6 @@
     <string name="sub_info_expires">Hết hạn: %1$s</string>
     <string name="sub_info_show_description">Hiện mô tả gói đăng ký</string>
     <string name="sub_info_hide_description">Ẩn mô tả gói đăng ký</string>
+    <string name="routing_use_profile_rules">Dùng quy tắc định tuyến của hồ sơ</string>
+    <string name="routing_use_profile_rules_summary">Chỉ dành cho hồ sơ JSON tùy chỉnh. Hãy kết nối lại để áp dụng thay đổi.</string>
 </resources>

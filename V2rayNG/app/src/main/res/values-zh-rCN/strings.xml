@@ -570,4 +570,6 @@
     <string name="sub_info_expires">到期：%1$s</string>
     <string name="sub_info_show_description">显示订阅说明</string>
     <string name="sub_info_hide_description">隐藏订阅说明</string>
+    <string name="routing_use_profile_rules">使用配置中的路由规则</string>
+    <string name="routing_use_profile_rules_summary">仅适用于自定义 JSON 配置。重新连接以应用更改。</string>
 </resources>

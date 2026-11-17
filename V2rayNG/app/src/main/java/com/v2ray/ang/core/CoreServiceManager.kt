@@ -49,6 +49,7 @@ object CoreServiceManager {
     private val coreController: CoreController = CoreNativeManager.newCoreController(CoreCallback())
     private val mMsgReceive = ReceiveMessageHandler()
     private var currentConfig: ProfileItem? = null
+    private var runningProfileGuid: String? = null
     private var processFinder: XrayProcessFinder? = null
     private var browserDialer: IDialerService? = null
     private var networkMonitor: NetworkMonitor? = null
@@ -138,6 +139,7 @@ object CoreServiceManager {
         }
 
         currentConfig = config
+        runningProfileGuid = guid
         var tunFd = vpnInterface?.fd ?: 0
         val dialerMode = BrowserDialerMode.from(config.browserDialerMode)
         val dialerAddr = if (dialerMode != null) {
@@ -323,6 +325,7 @@ object CoreServiceManager {
             return
         }
 
+        val profileGuid = runningProfileGuid
         connectionTestScope.coroutineContext.cancelChildren()
         connectionTestScope.launch {
             var time = -1L
@@ -352,6 +355,7 @@ object CoreServiceManager {
                 errorMessage = errorStr,
                 country = endpoint?.country,
                 ipAddress = endpoint?.ipAddress,
+                profileGuid = profileGuid,
             )
             withContext(Dispatchers.Main.immediate) {
                 if (isRunning()) {

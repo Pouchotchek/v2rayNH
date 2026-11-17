@@ -572,4 +572,6 @@
     <string name="sub_info_expires">মেয়াদ শেষ: %1$s</string>
     <string name="sub_info_show_description">সাবস্ক্রিপশনের বিবরণ দেখান</string>
     <string name="sub_info_hide_description">সাবস্ক্রিপশনের বিবরণ লুকান</string>
+    <string name="routing_use_profile_rules">প্রোফাইলের রাউটিং নিয়ম ব্যবহার করুন</string>
+    <string name="routing_use_profile_rules_summary">শুধু কাস্টম JSON প্রোফাইলের জন্য। পরিবর্তন প্রয়োগ করতে আবার সংযোগ করুন।</string>
 </resources>

@@ -17,6 +17,7 @@ import com.v2ray.ang.dto.entities.ServerAffiliationInfo
 import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.dto.entities.SubscriptionItem
 import com.v2ray.ang.extension.serializable
+import com.v2ray.ang.fmt.CustomFmt
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.AppLocaleManager
 import com.v2ray.ang.handler.MmkvManager
@@ -152,6 +153,12 @@ class MainRepository(
 
     override fun setSubscriptionDescriptionExpanded(groupId: String, expanded: Boolean): Boolean =
         MmkvManager.encodeSettings("subscription_description_expanded_$groupId", expanded)
+
+    override fun getCustomProtocol(guid: String): String? =
+        MmkvManager.decodeServerRaw(guid)?.let(CustomFmt::protocolLabel)
+
+    override fun saveServerDelay(guid: String, delayMillis: Long) =
+        MmkvManager.encodeServerTestDelayMillis(guid, delayMillis)
 
     override fun getServerGuidList(groupId: String): List<String> =
         if (groupId.isEmpty()) {

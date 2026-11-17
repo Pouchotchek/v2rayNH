@@ -51,7 +51,7 @@ internal fun buildServerRowUiModel(
         remarks = profile.remarks,
         statistics = profile.description.nullIfBlank()
             ?: AngConfigManager.generateDescription(profile),
-        typeDescription = serverProtocolDescription(profile),
+        typeDescription = server.customProtocol ?: serverProtocolDescription(profile),
         testDelayMillis = server.testDelayMillis,
         subscriptionBadge = subscriptionRemarks.firstOrNull()?.toString().orEmpty(),
     )

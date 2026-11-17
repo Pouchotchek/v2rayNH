@@ -572,4 +572,6 @@
     <string name="sub_info_expires">انقضا: %1$s</string>
     <string name="sub_info_show_description">نمایش توضیحات اشتراک</string>
     <string name="sub_info_hide_description">پنهان کردن توضیحات اشتراک</string>
+    <string name="routing_use_profile_rules">استفاده از قوانین مسیریابی نمایه</string>
+    <string name="routing_use_profile_rules_summary">فقط برای نمایه‌های JSON سفارشی. برای اعمال تغییرات دوباره متصل شوید.</string>
 </resources>
