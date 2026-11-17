@@ -11,8 +11,10 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.v2ray.ang.AngApplication
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
@@ -54,6 +56,7 @@ import com.v2ray.ang.ui.userasset.UserAssetActivity
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -105,6 +108,18 @@ class MainActivity : HelperBaseComponentActivity() {
         super.onCreate(savedInstanceState)
         mainViewModel.onAction(MainAction.Initialize)
         ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                try {
+                    while (true) {
+                        mainViewModel.onAction(MainAction.RefreshActiveLatency)
+                        delay(15_000)
+                    }
+                } finally {
+                    mainViewModel.onAction(MainAction.StopActiveLatencyRefresh)
+                }
+            }
+        }
 
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {}
     }
@@ -171,13 +186,6 @@ class MainActivity : HelperBaseComponentActivity() {
             MainDestination.CheckUpdate -> Intent(this, CheckUpdateActivity::class.java)
             MainDestination.BackupRestore -> Intent(this, BackupActivity::class.java)
             MainDestination.About -> Intent(this, AboutActivity::class.java)
-            MainDestination.Promotion -> {
-                Utils.openUri(
-                    this,
-                    "${Utils.decode(AppConfig.APP_PROMOTION_URL)}?t=${System.currentTimeMillis()}"
-                )
-                return
-            }
         }
         settingsActivityLauncher.launch(intent)
     }

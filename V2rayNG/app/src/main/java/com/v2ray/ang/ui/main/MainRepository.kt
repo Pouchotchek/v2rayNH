@@ -147,6 +147,12 @@ class MainRepository(
     override fun getSubscriptionItem(id: String): SubscriptionItem? =
         MmkvManager.decodeSubscription(id)
 
+    override fun isSubscriptionDescriptionExpanded(groupId: String): Boolean =
+        MmkvManager.decodeSettingsBool("subscription_description_expanded_$groupId", false)
+
+    override fun setSubscriptionDescriptionExpanded(groupId: String, expanded: Boolean): Boolean =
+        MmkvManager.encodeSettings("subscription_description_expanded_$groupId", expanded)
+
     override fun getServerGuidList(groupId: String): List<String> =
         if (groupId.isEmpty()) {
             MmkvManager.decodeAllServerList()

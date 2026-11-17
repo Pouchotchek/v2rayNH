@@ -15,6 +15,12 @@ Get the APK from this repository's **Releases** page. Both the standard and F-Dr
 
 The standard app ID is `com.v2raynh.android`. The F-Droid-style variant adds `.fdroid`. Each can be installed alongside upstream v2rayNG. App data is separate. Export a backup from the older app and import it in the fork if you want to migrate your settings.
 
+## Connection modes
+
+- **VPN** routes traffic through Android's VPN interface according to your routing and per-app settings.
+- **Proxy only** exposes a local proxy for apps configured to use it.
+- **Root** uses system-level routing and requires root access.
+
 ## Build from source
 
 Use Linux with JDK 21, Go 1.27.3, Git, curl, jq, unzip and the Android SDK. Install platform `android-37.0`, Build Tools `37.0.0`, and NDKs `29.0.14206865` and `30.0.16248370`. Set `ANDROID_HOME` to the SDK directory.

@@ -16,6 +16,15 @@ internal data class ServerRowUiModel(
     val subscriptionBadge: String,
 )
 
+internal fun prioritizeLatencyChecks(guids: List<String>, visibleGuids: List<String>): List<String> {
+    val visible = visibleGuids.toHashSet()
+    val lastVisibleIndex = guids.indexOfLast { it in visible }
+    if (lastVisibleIndex < 0) return guids
+    return guids.filter { it in visible } +
+        guids.drop(lastVisibleIndex + 1) +
+        guids.take(lastVisibleIndex).filterNot { it in visible }
+}
+
 internal data class ServerGroupUiState(
     val servers: List<ServersCache> = emptyList(),
     val rows: List<ServerRowUiModel> = emptyList(),

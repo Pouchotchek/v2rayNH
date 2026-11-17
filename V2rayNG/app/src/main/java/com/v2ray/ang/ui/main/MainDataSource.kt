@@ -29,6 +29,8 @@ interface MainDataSource : Closeable {
     fun getSubscriptionItem(id: String): SubscriptionItem?
 
     fun getServerGuidList(groupId: String): List<String>
+    fun isSubscriptionDescriptionExpanded(groupId: String): Boolean
+    fun setSubscriptionDescriptionExpanded(groupId: String, expanded: Boolean): Boolean
     fun decodeServerConfig(guid: String): ProfileItem?
     fun decodeAffiliationInfo(guid: String): ServerAffiliationInfo?
 

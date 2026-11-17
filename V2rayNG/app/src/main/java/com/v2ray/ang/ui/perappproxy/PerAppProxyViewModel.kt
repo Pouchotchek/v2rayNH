@@ -4,14 +4,12 @@ import android.app.Application
 import android.content.Context
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.AppInfo
-import com.v2ray.ang.dto.UrlContentRequest
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.ui.AppSelection
 import com.v2ray.ang.ui.base.BaseViewModel
 import com.v2ray.ang.util.AppManagerUtil
-import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.CancellationException
@@ -167,33 +165,8 @@ class PerAppProxyViewModel(application: Application) : BaseViewModel(application
     fun selectProxyAppAuto(context: Context) {
         val applicationContext = context.applicationContext
         launchLoading {
-            val url = AppConfig.ANDROID_PACKAGE_NAME_LIST_URL
-            var content = withContext(Dispatchers.IO) {
-                HttpUtil.getUrlContent(
-                    UrlContentRequest(
-                        url = url,
-                        timeout = 5000
-                    )
-                )
-            }
-            if (content.isNullOrEmpty()) {
-                val proxyUsername = SettingsManager.getSocksUsername()
-                val proxyPassword = SettingsManager.getSocksPassword()
-                val httpPort = SettingsManager.getHttpPort()
-                content = withContext(Dispatchers.IO) {
-                    HttpUtil.getUrlContent(
-                        UrlContentRequest(
-                            url = url,
-                            timeout = 5000,
-                            httpPort = httpPort,
-                            proxyUsername = proxyUsername,
-                            proxyPassword = proxyPassword
-                        )
-                    )
-                } ?: ""
-            }
             val success = applyProxyAppList(
-                content = content,
+                content = "",
                 context = applicationContext,
                 forceGoogleApps = true
             )
@@ -209,7 +182,7 @@ class PerAppProxyViewModel(application: Application) : BaseViewModel(application
         val applicationContext = context.applicationContext
         launchLoading {
             val success = applyProxyAppList(
-                content = content,
+                content = "",
                 context = applicationContext,
                 forceGoogleApps = false
             )

@@ -345,7 +345,8 @@ object CoreServiceManager {
             }
 
             ensureActive()
-            val endpoint = if (time >= 0) SpeedtestManager.getRemoteIPInfo() else null
+            val includeEndpoint = !requestId.startsWith(AppConfig.AUTO_LATENCY_REQUEST_PREFIX)
+            val endpoint = if (time >= 0 && includeEndpoint) SpeedtestManager.getRemoteIPInfo() else null
             val result = ConnectionTestResult(
                 delayMillis = time,
                 errorMessage = errorStr,

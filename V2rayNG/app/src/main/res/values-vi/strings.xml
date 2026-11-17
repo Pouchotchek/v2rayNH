@@ -140,7 +140,7 @@
     <string name="server_lab_pinned_ca256">Dấu vân tay chứng chỉ (SHA-256)</string>
     <string name="server_lab_browser_dialer">Bật Browser Dialer</string>
     <string name="server_lab_browser_dialer_tip">Chỉ hỗ trợ đầu ra xhttp (packet-up) và ws; các cài đặt liên quan đến TLS có thể bị bỏ qua hoặc xung đột</string>
-    <string name="toast_allow_insecure_deprecated">Nút hiện tại sử dụng kết nối không mã hóa. Hạ tầng trung gian mạng do các chính phủ độc tài kiểm soát có thể xem trực tiếp nội dung liên lạc của bạn.\nVì lý do bảo mật, không thể kết nối đến các nút như vậy bằng Xray core phiên bản 26.2.6 trở lên.\nNếu đây là nút do bạn tự dựng, hãy bật mã hóa an toàn như TLS hoặc ghim dấu vân tay chứng chỉ pinnedCA256.\nNếu đây là nút của nhà cung cấp dịch vụ, hãy liên hệ với họ để hoàn tất nâng cấp kỹ thuật. Nếu nhà cung cấp từ chối hợp tác, bạn nên chuyển sang nhà cung cấp coi trọng bảo mật người dùng hơn.\nĐể biết thêm thông tin, hãy truy cập https://github.com/2dust/v2rayN/discussions/9460</string>
+    <string name="toast_allow_insecure_deprecated">Nút hiện tại sử dụng kết nối không mã hóa. Hạ tầng trung gian mạng do các chính phủ độc tài kiểm soát có thể xem trực tiếp nội dung liên lạc của bạn.\nVì lý do bảo mật, không thể kết nối đến các nút như vậy bằng Xray core phiên bản 26.2.6 trở lên.\nNếu đây là nút do bạn tự dựng, hãy bật mã hóa an toàn như TLS hoặc ghim dấu vân tay chứng chỉ pinnedCA256.\nNếu đây là nút của nhà cung cấp dịch vụ, hãy liên hệ với họ để hoàn tất nâng cấp kỹ thuật. Nếu nhà cung cấp từ chối hợp tác, bạn nên chuyển sang nhà cung cấp coi trọng bảo mật người dùng hơn.\nĐể biết thêm thông tin, hãy truy cập https://github.com/Pouchotchek/v2rayNH/issues</string>
     <string name="pinned_ca256_action_fetch">Lấy dấu vân tay chứng chỉ</string>
     <string name="toast_fetch_cert_sha256_success">Đã lấy dấu vân tay chứng chỉ thành công</string>
     <string name="toast_fetch_cert_sha256_failed">Không thể lấy dấu vân tay chứng chỉ</string>
@@ -567,4 +567,7 @@
     <string name="sub_info_unlimited">Không giới hạn</string>
 
     <string name="subscription_untitled">Gói đăng ký</string>
+    <string name="sub_info_expires">Hết hạn: %1$s</string>
+    <string name="sub_info_show_description">Hiện mô tả gói đăng ký</string>
+    <string name="sub_info_hide_description">Ẩn mô tả gói đăng ký</string>
 </resources>

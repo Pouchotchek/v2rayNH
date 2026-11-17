@@ -78,6 +78,14 @@ fun MainScreen(
 
     val lazyListStates = remember { mutableStateMapOf<String, LazyListState>() }
     val lazyGridStates = remember { mutableStateMapOf<String, LazyGridState>() }
+    val testSubscriptionLatency: (String) -> Unit = { groupId ->
+        val visibleGuids = if (doubleColumnDisplay) {
+            lazyGridStates[groupId]?.layoutInfo?.visibleItemsInfo?.mapNotNull { it.key as? String }
+        } else {
+            lazyListStates[groupId]?.layoutInfo?.visibleItemsInfo?.mapNotNull { it.key as? String }
+        }
+        onAction(MainAction.TestSubscriptionLatency(groupId, visibleGuids.orEmpty()))
+    }
 
     LaunchedEffect(groups) {
         val validGroupIds = groups.map { it.id }.toSet()
@@ -178,7 +186,7 @@ fun MainScreen(
                             MainMoreMenuAction.LocateSelected -> onAction(MainAction.LocateSelectedServer)
                             MainMoreMenuAction.SortByTestResults -> onAction(MainAction.SortByTestResults)
                             MainMoreMenuAction.TestAll -> onAction(MainAction.TestAllServers)
-                            MainMoreMenuAction.TestAllRealPing -> onAction(MainAction.TestRealAllServers)
+                            MainMoreMenuAction.TestAllRealPing -> testSubscriptionLatency(uiState.selectedGroupId)
                             MainMoreMenuAction.UpdateSubscriptions -> onAction(MainAction.UpdateSubscriptions)
                         }
                     }
@@ -246,6 +254,9 @@ fun MainScreen(
                             },
                             onRemoveServer = removeServer,
                             usageInfo = group.usageInfo,
+                            descriptionExpanded = group.descriptionExpanded,
+                            pendingLatencyGuids = uiState.pendingLatencyGuids,
+                            onTestLatency = { testSubscriptionLatency(group.id) },
                             onOpenLink = { url -> onAction(MainAction.OpenSubscriptionLink(url)) },
                             contentPadding = PaddingValues(
                                 start = 0.dp,

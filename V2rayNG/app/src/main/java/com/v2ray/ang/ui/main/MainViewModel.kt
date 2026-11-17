@@ -110,6 +110,14 @@ class MainViewModel(
     private val pendingTestResults = linkedMapOf<String, Long>()
 
     private val testRequests = MainTestRequests()
+    private var automaticLatencyId: String? = null
+    private val queuedProfileTests = linkedMapOf<String, String>()
+    private data class ProfileTestBatch(
+        val remaining: MutableMap<String, String>,
+        val finished: CompletableDeferred<Unit> = CompletableDeferred(),
+    )
+    private val profileTestBatches = mutableMapOf<String, ProfileTestBatch>()
+    private var profileTestDispatch: Job? = null
     private var bulkTestJob: Job? = null
 
     private val initialPageReady = CompletableDeferred<Unit>()
@@ -149,10 +157,28 @@ class MainViewModel(
             MainServiceEvent.StateStopSuccess -> updateRunningState(false)
             is MainServiceEvent.MeasureDelayResult -> {
                 if (!uiState.value.isRunning || !testRequests.completeCurrent(event.requestId)) return
+                automaticLatencyId = null
                 _uiState.update { it.copy(isTesting = testRequests.isTesting, status = MainStatus.ConnectionTest(event.result)) }
             }
 
             is MainServiceEvent.MeasureConfigSuccess -> {
+                val groupId = profileTestBatches[event.requestId]?.remaining?.remove(event.result.guid)
+                if (groupId != null) {
+                    val updates = mapOf(event.result.guid to event.result.delayMillis)
+                    mutableServerGroupState(groupId).update { current ->
+                        current.copy(
+                            servers = applyTestDelayResults(current.servers, updates),
+                            rows = applyTestDelayResultsToRows(current.rows, updates),
+                        )
+                    }
+                    viewModelScope.launch {
+                        cacheMutex.withLock {
+                            groupDataCache[groupId]?.let { groupDataCache[groupId] = applyTestDelayResults(it, updates) }
+                        }
+                    }
+                    _uiState.update { it.copy(pendingLatencyGuids = it.pendingLatencyGuids - event.result.guid) }
+                    return
+                }
                 val request = testRequests.bulk?.takeIf { it.id == event.requestId } ?: return
                 queueTestResult(event.result, request)
             }
@@ -164,6 +190,7 @@ class MainViewModel(
             }
 
             is MainServiceEvent.MeasureConfigFinish -> {
+                finishProfileTestBatch(event.requestId)
                 val request = testRequests.bulk?.takeIf { it.id == event.requestId } ?: return
                 val scheduledFlush = testResultFlushJob
                 testResultFlushJob = viewModelScope.launch {
@@ -175,12 +202,16 @@ class MainViewModel(
             }
 
             is MainServiceEvent.MeasureDelayCancelled -> {
-                if (testRequests.completeCurrent(event.requestId)) resetTestStatus()
+                val automatic = automaticLatencyId == event.requestId
+                if (automatic) automaticLatencyId = null
+                if (testRequests.completeCurrent(event.requestId) && !automatic) resetTestStatus()
             }
 
             is MainServiceEvent.MeasureConfigCancelled -> {
+                finishProfileTestBatch(event.requestId)
                 if (testRequests.completeBulk(event.requestId) != null) {
                     cancelPendingTestResults()
+                    clearBulkLatencyIndicators()
                     resetTestStatus()
                 }
             }
@@ -213,6 +244,7 @@ class MainViewModel(
         }
         if (updates.isEmpty()) return
         if (testRequests.bulk?.id != request.id) return
+        _uiState.update { it.copy(pendingLatencyGuids = it.pendingLatencyGuids - updates.keys) }
         mutableServerGroupState(request.groupId).update { current ->
             current.copy(
                 servers = applyTestDelayResults(current.servers, updates),
@@ -281,7 +313,32 @@ class MainViewModel(
             MainAction.RefreshDueSubscriptions -> refreshDueSubscriptions()
             MainAction.RefreshGroups -> setupGroupTab(forceRefresh = true)
             MainAction.TestAllServers -> testAllRealPing(true)
-            MainAction.TestRealAllServers -> testAllRealPing()
+            MainAction.RefreshActiveLatency -> {
+                if (!testRequests.isTesting) testCurrentServerRealPing(automatic = true)
+            }
+            MainAction.StopActiveLatencyRefresh -> {
+                automaticLatencyId?.let { requestId ->
+                    if (testRequests.completeCurrent(requestId)) {
+                        _uiState.update { it.copy(isTesting = testRequests.isTesting) }
+                    }
+                }
+                automaticLatencyId = null
+            }
+            is MainAction.TestProfileLatency -> queueProfileLatency(action.groupId, action.guid)
+            is MainAction.TestSubscriptionLatency -> {
+                if (uiState.value.selectedGroupId == action.groupId) {
+                    testAllRealPing(visibleGuids = action.visibleGuids)
+                }
+            }
+            is MainAction.SetSubscriptionDescriptionExpanded -> viewModelScope.launch(ioDispatcher) {
+                if (dataSource.setSubscriptionDescriptionExpanded(action.groupId, action.expanded)) {
+                    _uiState.update { state ->
+                        state.copy(groups = state.groups.map { group ->
+                            if (group.id == action.groupId) group.copy(descriptionExpanded = action.expanded) else group
+                        })
+                    }
+                }
+            }
             MainAction.CancelTesting -> cancelAllPing()
             MainAction.RemoveAllServers -> removeAllServerAsync()
             MainAction.RemoveDuplicateServers -> removeDuplicateServerAsync()
@@ -474,6 +531,7 @@ class MainViewModel(
                 val groups = dataSource.getSubscriptions().map {
                     GroupMapItem(
                         id = it.guid,
+                        descriptionExpanded = dataSource.isSubscriptionDescriptionExpanded(it.guid),
                         remarks = it.subscription.usageInfo?.title ?: it.subscription.remarks
                             .takeUnless { name -> name == "import sub" }
                             ?: dataSource.getString(R.string.subscription_untitled),
@@ -836,7 +894,47 @@ class MainViewModel(
     }
 
     // ---------- Testing ----------
+    private fun queueProfileLatency(groupId: String, guid: String) {
+        if (guid in uiState.value.pendingLatencyGuids) return
+        if (mutableServerGroupState(groupId).value.servers.none { it.guid == guid }) return
+        queuedProfileTests[guid] = groupId
+        _uiState.update { it.copy(pendingLatencyGuids = it.pendingLatencyGuids + guid) }
+        if (profileTestDispatch?.isActive == true) return
+        profileTestDispatch = viewModelScope.launch {
+            while (queuedProfileTests.isNotEmpty()) {
+                delay(120)
+                val batch = queuedProfileTests.toMutableMap()
+                queuedProfileTests.clear()
+                val requestId = java.util.UUID.randomUUID().toString()
+                val request = ProfileTestBatch(batch)
+                profileTestBatches[requestId] = request
+                try {
+                    dataSource.sendMsg2TestService(
+                        TestServiceMessage(key = AppConfig.MSG_MEASURE_CONFIG_START, serverGuids = batch.keys.toList()),
+                        requestId,
+                    )
+                } catch (error: Exception) {
+                    finishProfileTestBatch(requestId)
+                    LogUtil.e(AppConfig.TAG, "Failed to start individual latency checks", error)
+                }
+                // Keep one swipe batch in flight so repeated gestures share the worker's concurrency limit.
+                request.finished.await()
+            }
+        }
+    }
+
+    private fun finishProfileTestBatch(requestId: String) {
+        val request = profileTestBatches.remove(requestId) ?: return
+        _uiState.update { it.copy(pendingLatencyGuids = it.pendingLatencyGuids - request.remaining.keys) }
+        request.finished.complete(Unit)
+    }
+
     fun cancelAllPing() {
+        automaticLatencyId = null
+        profileTestDispatch?.cancel()
+        queuedProfileTests.clear()
+        profileTestBatches.clear()
+        _uiState.update { it.copy(pendingLatencyGuids = emptySet()) }
         bulkTestJob?.cancel()
         bulkTestJob = null
         testRequests.cancelBulk()
@@ -856,14 +954,14 @@ class MainViewModel(
         }
     }
 
-    fun testAllRealPing(onlyTcp: Boolean = false) {
+    fun testAllRealPing(onlyTcp: Boolean = false, visibleGuids: List<String>? = null) {
         cancelAllPing()
         val groupId = uiState.value.selectedGroupId
         val servers = currentServers()
         if (servers.isEmpty()) {
             return
         }
-        val serverGuids = servers.map { it.guid }
+        val serverGuids = prioritizeLatencyChecks(servers.map { it.guid }, visibleGuids.orEmpty())
         mutableServerGroupState(groupId).update { current ->
             current.copy(
                 servers = current.servers.map { server ->
@@ -880,12 +978,13 @@ class MainViewModel(
         val message = TestServiceMessage(
             key = AppConfig.MSG_MEASURE_CONFIG_START,
             subscriptionId = groupId,
-            serverGuids = if (keywordFilter.isNotEmpty()) serverGuids else emptyList(),
+            serverGuids = if (visibleGuids != null || keywordFilter.isNotEmpty()) serverGuids else emptyList(),
             onlyTcp = onlyTcp
         )
         _uiState.update {
             it.copy(
                 isTesting = true,
+                pendingLatencyGuids = serverGuids.toSet(),
                 status = MainStatus.Testing
             )
         }
@@ -912,20 +1011,27 @@ class MainViewModel(
         pendingTestResults.clear()
     }
 
-    fun testCurrentServerRealPing() {
+    fun testCurrentServerRealPing(automatic: Boolean = false) {
         if (!uiState.value.isRunning) return
-        val requestId = testRequests.beginCurrent()
-        _uiState.update { it.copy(isTesting = true, status = MainStatus.Testing) }
+        val requestId = testRequests.beginCurrent(if (automatic) AppConfig.AUTO_LATENCY_REQUEST_PREFIX else "")
+        automaticLatencyId = requestId.takeIf { automatic }
+        if (!automatic) _uiState.update { it.copy(isTesting = true, status = MainStatus.Testing) }
         dataSource.testCurrentServerRealPing(requestId)
     }
 
     private fun onTestsFinished(requestId: String) {
         if (testRequests.completeBulk(requestId) == null) return
+        clearBulkLatencyIndicators()
         resetTestStatus()
         viewModelScope.launch(ioDispatcher) {
             cacheMutex.withLock { groupDataCache.clear() }
             reloadAllGroups(_uiState.value.groups.map { it.id })
         }
+    }
+
+    private fun clearBulkLatencyIndicators() {
+        val singles = queuedProfileTests.keys + profileTestBatches.values.flatMap { it.remaining.keys }
+        _uiState.update { it.copy(pendingLatencyGuids = it.pendingLatencyGuids.intersect(singles.toSet())) }
     }
 
     fun triggerLocateSelectedServer() {
@@ -951,7 +1057,10 @@ class MainViewModel(
 
     // ---------- Running state ----------
     private fun updateRunningState(running: Boolean, clearTestingText: Boolean = true) {
-        if (!running || clearTestingText) testRequests.invalidateCurrent()
+        if (!running || clearTestingText) {
+            testRequests.invalidateCurrent()
+            automaticLatencyId = null
+        }
         _uiState.update { state ->
             state.copy(
                 isRunning = running,
@@ -985,6 +1094,6 @@ class MainViewModel(
     }
 
     private companion object {
-        const val TEST_RESULT_FLUSH_INTERVAL_MS = 500L
+        const val TEST_RESULT_FLUSH_INTERVAL_MS = 80L
     }
 }

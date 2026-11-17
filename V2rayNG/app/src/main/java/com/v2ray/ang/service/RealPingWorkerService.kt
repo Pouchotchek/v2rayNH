@@ -50,30 +50,21 @@ class RealPingWorkerService(
 ) {
     private val job = SupervisorJob()
     private val concurrency = SettingsManager.getRealPingConcurrency()
-    private val dispatcher = Executors.newFixedThreadPool(if (onlyTcp) concurrency * 2 else concurrency).asCoroutineDispatcher()
+    private val parallelism = if (onlyTcp) concurrency * 2 else concurrency
+    private val dispatcher = Executors.newFixedThreadPool(parallelism).asCoroutineDispatcher()
     private val scope = CoroutineScope(job + dispatcher + CoroutineName("RealPingBatchWorker"))
 
     private val runningCount = AtomicInteger(0)
     private val totalCount = AtomicInteger(0)
 
     fun start() {
-        val jobs = guids.map { guid ->
-            totalCount.incrementAndGet()
+        val nextIndex = AtomicInteger(0)
+        totalCount.set(guids.size)
+        val jobs = List(minOf(parallelism, guids.size)) {
             scope.launch {
-                runningCount.incrementAndGet()
-                try {
-                    val result = if (onlyTcp) startTcping(guid) else startRealPing(guid)
-                    if (scope.isActive) {
-                        onEvent(RealPingEvent.Result(guid, result))
-                    }
-                } catch (_: Throwable) {
-                    // ignore
-                } finally {
-                    val count = totalCount.decrementAndGet()
-                    val left = runningCount.decrementAndGet()
-                    if (scope.isActive) {
-                        onEvent(RealPingEvent.Progress("$left / $count"))
-                    }
+                while (isActive) {
+                    val guid = guids.getOrNull(nextIndex.getAndIncrement()) ?: break
+                    checkProfile(guid)
                 }
             }
         }
@@ -88,6 +79,24 @@ class RealPingWorkerService(
                 // If cancelled, don't send finish event to avoid confusion
             } finally {
                 close()
+            }
+        }
+    }
+
+    private suspend fun checkProfile(guid: String) {
+        runningCount.incrementAndGet()
+        try {
+            val result = if (onlyTcp) startTcping(guid) else startRealPing(guid)
+            if (scope.isActive) {
+                onEvent(RealPingEvent.Result(guid, result))
+            }
+        } catch (_: Throwable) {
+            // ignore
+        } finally {
+            val count = totalCount.decrementAndGet()
+            val left = runningCount.decrementAndGet()
+            if (scope.isActive) {
+                onEvent(RealPingEvent.Progress("$left / $count"))
             }
         }
     }

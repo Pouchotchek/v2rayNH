@@ -6,9 +6,20 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.util.Calendar
 
 class MainSubscriptionInfoTest {
     private val now = 1_000_000_000_000L // ms
+
+    @Test
+    fun missingAndSentinelExpiryDatesUseInfinity() {
+        val sentinel = Calendar.getInstance().apply {
+            clear()
+            set(2099, Calendar.JUNE, 1)
+        }.timeInMillis
+        assertEquals("∞", subscriptionExpiryLabel(null))
+        assertEquals("∞", subscriptionExpiryLabel(sentinel))
+    }
 
     @Test
     fun limitedTrafficComputesFraction() {

@@ -2,6 +2,19 @@ package com.v2ray.ang.ui.main
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -84,6 +97,9 @@ fun GroupPagerPage(
     onMoreServer: (String, ProfileItem) -> Unit,
     onRemoveServer: (String, String) -> Unit,
     usageInfo: SubscriptionUsageInfo?,
+    descriptionExpanded: Boolean,
+    pendingLatencyGuids: Set<String>,
+    onTestLatency: () -> Unit,
     onOpenLink: (String) -> Unit,
     contentPadding: PaddingValues
 ) {
@@ -98,6 +114,9 @@ fun GroupPagerPage(
         onShareServer,
         onMoreServer,
         onRemoveServer,
+        groupId,
+        mainViewModel,
+        pendingLatencyGuids,
     ) {
         ServerRowActions(
             select = onSelectServer,
@@ -105,6 +124,8 @@ fun GroupPagerPage(
             share = onShareServer,
             more = onMoreServer,
             remove = onRemoveServer,
+            testLatency = { guid -> mainViewModel.onAction(MainAction.TestProfileLatency(groupId, guid)) },
+            pendingLatencyGuids = pendingLatencyGuids,
         )
     }
     val header: (@Composable () -> Unit)? = usageInfo?.let { info ->
@@ -113,6 +134,11 @@ fun GroupPagerPage(
                 info = info,
                 onOpenLink = onOpenLink,
                 onRefresh = { mainViewModel.onAction(MainAction.UpdateGroupSubscription(groupId)) },
+                descriptionExpanded = descriptionExpanded,
+                onDescriptionToggle = {
+                    mainViewModel.onAction(MainAction.SetSubscriptionDescriptionExpanded(groupId, !descriptionExpanded))
+                },
+                onTestLatency = onTestLatency,
             )
         }
     }
@@ -139,7 +165,59 @@ private class ServerRowActions(
     val share: (String, ProfileItem) -> Unit,
     val more: (String, ProfileItem) -> Unit,
     val remove: (String, String) -> Unit,
+    val testLatency: (String) -> Unit,
+    val pendingLatencyGuids: Set<String>,
 )
+
+@Composable
+private fun Modifier.swipeToTest(guid: String, test: (String) -> Unit): Modifier {
+    val latestTest = androidx.compose.runtime.rememberUpdatedState(test)
+    val label = stringResource(R.string.title_real_ping_all_server)
+    val offset = remember(guid) { mutableFloatStateOf(0f) }
+    return semantics {
+        customActions = listOf(CustomAccessibilityAction(label) { latestTest.value(guid); true })
+    }.pointerInput(guid) {
+        coroutineScope {
+            var returnJob: Job? = null
+            var startTime = 0L
+            var dragDistance = 0f
+            var firstDrag = true
+            fun settle() {
+                val elapsed = (android.os.SystemClock.uptimeMillis() - startTime).coerceAtLeast(1)
+                val speed = kotlin.math.abs(dragDistance) / density / elapsed
+                val duration = (230f - speed * 110f).toInt().coerceIn(90, 230)
+                returnJob = launch {
+                    animate(offset.floatValue, 0f, animationSpec = tween(duration, easing = FastOutSlowInEasing)) { value, _ ->
+                        offset.floatValue = value
+                    }
+                }
+            }
+            detectHorizontalDragGestures(
+                onDragStart = {
+                    returnJob?.cancel()
+                    startTime = android.os.SystemClock.uptimeMillis()
+                    dragDistance = 0f
+                    firstDrag = true
+                },
+                onDragEnd = {
+                    if (dragDistance <= -48.dp.toPx()) latestTest.value(guid)
+                    settle()
+                },
+                onDragCancel = { settle() },
+            ) { change, delta ->
+                change.consume()
+                dragDistance += delta
+                if (firstDrag) {
+                    startTime = change.previousUptimeMillis
+                    firstDrag = false
+                }
+                offset.floatValue = (offset.floatValue + delta).coerceIn(-size.width.toFloat(), 0f)
+            }
+        }
+    }.graphicsLayer {
+        translationX = offset.floatValue
+    }
+}
 
 @Composable
 private fun ServerListPage(
@@ -363,6 +441,7 @@ private fun ServerListItem(
                     stateDescription = selectedStateDescription
                 }
             }
+            .swipeToTest(row.guid, actions.testLatency)
             .clickable { actions.select(row.guid) }
     ) {
         Box(
@@ -455,13 +534,17 @@ private fun ServerListItem(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    testResult,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (row.testDelayMillis < 0L) colorPingRed else colorPing,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (row.guid in actions.pendingLatencyGuids) {
+                    ProfileLatencySpinner()
+                } else {
+                    Text(
+                        testResult,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (row.testDelayMillis < 0L) colorPingRed else colorPing,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
@@ -494,6 +577,7 @@ private fun CompactServerListItem(
             .semantics {
                 if (selectedStateDescription != null) stateDescription = selectedStateDescription
             }
+            .swipeToTest(row.guid, actions.testLatency)
             .clickable { actions.select(row.guid) }
             .padding(start = 14.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -518,7 +602,9 @@ private fun CompactServerListItem(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (!doubleColumnDisplay && testResult.isNotEmpty()) {
+        if (row.guid in actions.pendingLatencyGuids) {
+            ProfileLatencySpinner()
+        } else if (!doubleColumnDisplay && testResult.isNotEmpty()) {
             CompactServerDelay(testResult, row.testDelayMillis < 0)
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -528,11 +614,20 @@ private fun CompactServerListItem(
                     contentDescription = stringResource(R.string.acc_more),
                 )
             }
-            if (doubleColumnDisplay && testResult.isNotEmpty()) {
+            if (doubleColumnDisplay && testResult.isNotEmpty() && row.guid !in actions.pendingLatencyGuids) {
                 CompactServerDelay(testResult, row.testDelayMillis < 0)
             }
         }
     }
+}
+
+@Composable
+private fun ProfileLatencySpinner() {
+    CircularProgressIndicator(
+        modifier = Modifier.size(14.dp),
+        color = MaterialTheme.colorScheme.primary,
+        strokeWidth = 2.dp,
+    )
 }
 
 @Composable

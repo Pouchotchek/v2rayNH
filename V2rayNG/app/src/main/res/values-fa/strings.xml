@@ -140,7 +140,7 @@
     <string name="server_lab_pinned_ca256">اثر انگشت گواهی (SHA-256)</string>
     <string name="server_lab_browser_dialer">فعال‌سازی Browser Dialer</string>
     <string name="server_lab_browser_dialer_tip">فقط خروجی‌های xhttp (packet-up) و ws پشتیبانی می‌شوند؛ تنظیمات مرتبط با TLS ممکن است نادیده گرفته شوند یا تداخل داشته باشند</string>
-    <string name="toast_allow_insecure_deprecated">گره فعلی از اتصال رمزنگاری‌نشده استفاده می‌کند. زیرساخت‌های واسط شبکه که در کنترل حکومت‌های اقتدارگرا هستند ممکن است ارتباطات شما را مستقیماً مشاهده کنند.\nبه‌دلایل امنیتی، اتصال به چنین گره‌هایی با هسته Xray نسخه 26.2.6 و بالاتر امکان‌پذیر نیست.\nاگر گره را خودتان راه‌اندازی کرده‌اید، رمزنگاری امنی مانند TLS را فعال کنید یا اثر انگشت گواهی pinnedCA256 را پین کنید.\nاگر گره متعلق به ارائه‌دهنده خدمات است، برای ارتقای فنی با آن‌ها تماس بگیرید. اگر ارائه‌دهنده همکاری نمی‌کند، توصیه می‌شود به ارائه‌دهنده‌ای بروید که برای امنیت کاربران اهمیت بیشتری قائل است.\nبرای اطلاعات بیشتر به https://github.com/2dust/v2rayN/discussions/9460 مراجعه کنید</string>
+    <string name="toast_allow_insecure_deprecated">گره فعلی از اتصال رمزنگاری‌نشده استفاده می‌کند. زیرساخت‌های واسط شبکه که در کنترل حکومت‌های اقتدارگرا هستند ممکن است ارتباطات شما را مستقیماً مشاهده کنند.\nبه‌دلایل امنیتی، اتصال به چنین گره‌هایی با هسته Xray نسخه 26.2.6 و بالاتر امکان‌پذیر نیست.\nاگر گره را خودتان راه‌اندازی کرده‌اید، رمزنگاری امنی مانند TLS را فعال کنید یا اثر انگشت گواهی pinnedCA256 را پین کنید.\nاگر گره متعلق به ارائه‌دهنده خدمات است، برای ارتقای فنی با آن‌ها تماس بگیرید. اگر ارائه‌دهنده همکاری نمی‌کند، توصیه می‌شود به ارائه‌دهنده‌ای بروید که برای امنیت کاربران اهمیت بیشتری قائل است.\nبرای اطلاعات بیشتر به https://github.com/Pouchotchek/v2rayNH/issues مراجعه کنید</string>
     <string name="pinned_ca256_action_fetch">دریافت اثر انگشت گواهی</string>
     <string name="toast_fetch_cert_sha256_success">اثر انگشت گواهی با موفقیت دریافت شد</string>
     <string name="toast_fetch_cert_sha256_failed">دریافت اثر انگشت گواهی ناموفق بود</string>
@@ -569,4 +569,7 @@
     <string name="sub_info_unlimited">نامحدود</string>
 
     <string name="subscription_untitled">اشتراک</string>
+    <string name="sub_info_expires">انقضا: %1$s</string>
+    <string name="sub_info_show_description">نمایش توضیحات اشتراک</string>
+    <string name="sub_info_hide_description">پنهان کردن توضیحات اشتراک</string>
 </resources>

@@ -11,7 +11,7 @@ internal class MainTestRequests {
         private set
     val isTesting: Boolean get() = current != null || bulk != null
 
-    fun beginCurrent(): String = UUID.randomUUID().toString().also { current = it }
+    fun beginCurrent(prefix: String = ""): String = (prefix + UUID.randomUUID()).also { current = it }
 
     fun completeCurrent(id: String): Boolean {
         if (id != current) return false

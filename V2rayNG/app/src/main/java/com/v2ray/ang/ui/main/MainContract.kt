@@ -22,6 +22,7 @@ data class MainUiState(
     val selectedGuid: String? = null,
     val isRunning: Boolean = false,
     val isTesting: Boolean = false,
+    val pendingLatencyGuids: Set<String> = emptySet(),
     val status: MainStatus = MainStatus.Disconnected,
     val locateTarget: LocateTarget? = null,
     val confirmRemove: Boolean = false,
@@ -38,8 +39,12 @@ sealed interface MainAction {
     data object RefreshGroups : MainAction
     data object ToggleService : MainAction
     data object TestCurrentServer : MainAction
+    data object RefreshActiveLatency : MainAction
+    data object StopActiveLatencyRefresh : MainAction
     data object TestAllServers : MainAction
-    data object TestRealAllServers : MainAction
+    data class TestSubscriptionLatency(val groupId: String, val visibleGuids: List<String>) : MainAction
+    data class TestProfileLatency(val groupId: String, val guid: String) : MainAction
+    data class SetSubscriptionDescriptionExpanded(val groupId: String, val expanded: Boolean) : MainAction
     data object CancelTesting : MainAction
     data object RemoveAllServers : MainAction
     data object RemoveDuplicateServers : MainAction

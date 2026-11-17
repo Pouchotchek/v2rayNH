@@ -5,7 +5,7 @@ plugins {
     id("com.jaredsburrows.license")
 }
 
-val forkRepository = providers.gradleProperty("FORK_GITHUB_REPOSITORY").orElse("").get()
+val forkRepository = providers.gradleProperty("FORK_GITHUB_REPOSITORY").orElse("Pouchotchek/v2rayNH").get()
 require(forkRepository.isEmpty() || forkRepository.matches(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")))
 
 android {
@@ -17,8 +17,8 @@ android {
         applicationId = "com.v2raynh.android"
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 6
+        versionName = "1.0.1"
         buildConfigField("String", "FORK_GITHUB_REPOSITORY", "\"$forkRepository\"")
         buildConfigField("boolean", "USES_XRAY_CORE", "true")
 

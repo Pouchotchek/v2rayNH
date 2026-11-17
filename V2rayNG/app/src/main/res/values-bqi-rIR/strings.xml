@@ -140,7 +140,7 @@
     <string name="server_lab_pinned_ca256">جا کلک گوواهی (SHA-256)</string>
     <string name="server_lab_browser_dialer">Browser Dialer ره وندن</string>
     <string name="server_lab_browser_dialer_tip">تینا خۊرۊجیا xhttp (packet-up) وو ws لادراری ابۊن؛ سامووا وابسته و TLS گاشڌ نیڌه گرؽڌه بۊن یا تداخول داشته بۊ</string>
-    <string name="toast_allow_insecure_deprecated">گره هیم سکویی منپیز رزم نگاری نوابیڌه ن و کار اگره. زؽرساختا منجا شبکه ک من کونتورول هۊکۊمتا اقتدارگرا هڌن گاشڌ ارتباتا ایسا ن موستقیمن بنیرن.\nسی دلیلا ٱمنیتی، منپیز و ای گره هایی ک وا هسته Xray نوسخه 26.2.6 وو روء تر امکووݩ پزیر نؽڌ.\nٱر گره ن خوتووݩ ره وندین، رزم نگاری ٱمنی جۊر TLS ن ره ونین یا جا کلک گوواهی pinnedCA256 ن پین کۊنین.\nٱر گره ز ارائه کون خدمات هڌ، سی ارتقای فنی بسووݩ زنگ بزݩ. ٱر ارائه کون واتووݩ هیاری نکرد، پؽشنهاڌ ابۊ و ارائه کونی ریوین ک سی ٱمنیت منتورووݩ ٱهمیت قلوه ای اده.\nسی دووسمندیا قلوه و https://github.com/2dust/v2rayN/discussions/9460 سر بزنین.</string>
+    <string name="toast_allow_insecure_deprecated">گره هیم سکویی منپیز رزم نگاری نوابیڌه ن و کار اگره. زؽرساختا منجا شبکه ک من کونتورول هۊکۊمتا اقتدارگرا هڌن گاشڌ ارتباتا ایسا ن موستقیمن بنیرن.\nسی دلیلا ٱمنیتی، منپیز و ای گره هایی ک وا هسته Xray نوسخه 26.2.6 وو روء تر امکووݩ پزیر نؽڌ.\nٱر گره ن خوتووݩ ره وندین، رزم نگاری ٱمنی جۊر TLS ن ره ونین یا جا کلک گوواهی pinnedCA256 ن پین کۊنین.\nٱر گره ز ارائه کون خدمات هڌ، سی ارتقای فنی بسووݩ زنگ بزݩ. ٱر ارائه کون واتووݩ هیاری نکرد، پؽشنهاڌ ابۊ و ارائه کونی ریوین ک سی ٱمنیت منتورووݩ ٱهمیت قلوه ای اده.\nسی دووسمندیا قلوه و https://github.com/Pouchotchek/v2rayNH/issues سر بزنین.</string>
     <string name="pinned_ca256_action_fetch">گرؽڌن وو پور کردن جا کلک گوواهی</string>
     <string name="toast_fetch_cert_sha256_success">جا کلک گوواهی وا مووفقیت گرؽڌه وابی</string>
     <string name="toast_fetch_cert_sha256_failed">گرؽڌن جا کلک گوواهی مووفق نبی</string>
@@ -569,4 +569,7 @@
     <string name="sub_info_unlimited">بی‌حد</string>
 
     <string name="subscription_untitled">اشتراک</string>
+    <string name="sub_info_expires">انقضا: %1$s</string>
+    <string name="sub_info_show_description">نمایش توضیحات اشتراک</string>
+    <string name="sub_info_hide_description">پنهان کردن توضیحات اشتراک</string>
 </resources>
